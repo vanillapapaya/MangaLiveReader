@@ -96,45 +96,36 @@ function originPattern(u) {
 
 document.getElementById("save").addEventListener("click", async () => {
   const value = url.value.trim() || DEFAULTS.serviceUrl;
-
-  // **루프백이 아닌 주소는 권한을 따로 받아야 한다.** 사람마다 서비스 머신 주소가
-  // 달라서 `manifest.json` 에 못 박을 수 없다 — `optional_host_permissions` 로
-  // 두고 여기서 요청한다. 권한이 없으면 fetch 가 CORS 로 조용히 막힌다.
-  //
-  // **`request()` 앞에서 `await` 하면 안 된다.** 이 API 는 사용자 제스처가 살아
-  // 있을 때만 먹는데, 앞에서 한 번이라도 await 하면 제스처 문맥이 끊겨 조용히
-  // 실패한다. 예전에는 `permissions.contains()` 를 먼저 await 해서 **권한 요청
-  // 팝업이 아예 안 떴다** — 맥북에서 못 붙던 원인이다.
-  //
-  // 이미 있는 권한을 다시 요청해도 무해하다 (바로 true 로 끝난다).
-  const pattern = originPattern(value);
-  if (pattern) {
-    const granted = await chrome.permissions.request({ origins: [pattern] });
-    if (!granted) {
-      saved.hidden = false;
-      saved.textContent = `${pattern} 권한이 없다 — 그 주소로는 못 붙는다`;
-      saved.style.color = "#c33";
-      return;
-    }
-  }
-
-  // 음성 서버도 다른 출처라 권한이 필요하다.
   const tts = ttsurl.value.trim();
-  const ttsPattern = tts ? originPattern(tts) : null;
-  if (ttsPattern && !(await chrome.permissions.request({ origins: [ttsPattern] }))) {
-    saved.hidden = false;
-    saved.textContent = `${ttsPattern} 권한이 없다 — 음성 서버를 못 쓴다`;
-    saved.style.color = "#c33";
-    return;
-  }
 
-  // 자동으로 켜질 사이트는 캡처 권한이 필요하다 (위 `sitePatterns` 주석).
-  const sites = sitePatterns(autosites.value);
-  if (sites.length && !(await chrome.permissions.request({ origins: sites }))) {
-    saved.hidden = false;
-    saved.textContent = "사이트 권한을 거부했다 — 자동 실행이 안 된다 (직접 Alt+Shift+M 은 됨)";
-    saved.style.color = "#c33";
-    // 설정 자체는 저장한다. 권한은 나중에 다시 받을 수 있다.
+  // ---------------------------------------------------------------------------
+  // 필요한 권한을 **한 번에, 맨 먼저** 요청한다.
+  //
+  // `chrome.permissions.request()` 는 사용자 제스처가 살아 있을 때만 먹는다.
+  // **`await` 를 한 번이라도 거치면 제스처가 끊겨 팝업이 아예 안 뜬다.**
+  //
+  // 이 함정에 세 번 걸렸다: 처음엔 `permissions.contains()` 를 먼저 await 해서,
+  // 그 다음엔 요청을 세 번으로 나눠서(둘째·셋째가 await 뒤라 조용히 실패). 그래서
+  // 사이트를 추가해도 팝업이 안 뜨고 자동이 안 켜졌다.
+  //
+  // 나눌 이유도 없다 — 한 팝업에 다 넣으면 사용자도 한 번만 답한다.
+  // ---------------------------------------------------------------------------
+  const wanted = [
+    ...(originPattern(value) ? [originPattern(value)] : []),
+    ...(tts && originPattern(tts) ? [originPattern(tts)] : []),
+    ...sitePatterns(autosites.value),
+  ];
+
+  let granted = true;
+  if (wanted.length) {
+    try {
+      granted = await chrome.permissions.request({ origins: [...new Set(wanted)] });
+    } catch (err) {
+      granted = false;
+      saved.hidden = false;
+      saved.textContent = `권한 요청 실패: ${err.message}`;
+      saved.style.color = "#c33";
+    }
   }
 
   await chrome.storage.sync.set({
@@ -145,9 +136,15 @@ document.getElementById("save").addEventListener("click", async () => {
     autoSites: autosites.value,
   });
   saved.hidden = false;
-  saved.textContent = "저장했다";
-  saved.style.color = "";
-  setTimeout(() => (saved.hidden = true), 1500);
+  if (granted) {
+    saved.textContent = "저장했다";
+    saved.style.color = "";
+    setTimeout(() => (saved.hidden = true), 1500);
+  } else {
+    // 설정은 저장했다. 권한만 없는 것이니 다시 누르면 된다.
+    saved.textContent = "저장했지만 권한이 없다 — 자동 실행·원격 접속이 안 된다. 다시 「저장」을 눌러 허용할 것";
+    saved.style.color = "#c33";
+  }
 });
 
 // 캐시 전부 지우기. **되돌릴 수 없으므로 한 번 묻는다.**
