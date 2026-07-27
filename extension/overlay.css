@@ -351,3 +351,27 @@
   background: rgba(120, 220, 255, 0.18);
   z-index: 2;
 }
+
+/* ---------------------------------------------------------------------------
+   잠깐 숨기기 (` 키를 누르고 있는 동안) · 고정 숨김 (패널 「숨김」)
+
+   `visibility` 를 쓴다 — `display:none` 이면 되돌릴 때 레이아웃을 다시 잡느라
+   라벨 배치가 흐트러진다. 패널은 남겨 둬야 다시 켤 수 있다.
+   --------------------------------------------------------------------------- */
+
+#mlr-overlay.mlr-peek #mlr-boxes,
+#mlr-overlay.mlr-peek #mlr-status,
+#mlr-overlay.mlr-hidden #mlr-boxes,
+#mlr-overlay.mlr-hidden #mlr-status {
+  visibility: hidden;
+}
+
+/* 잠깐 숨기는 중에는 패널도 거의 안 보이게 — 그림을 보려는 것이니까.
+   다만 완전히 없애지는 않는다 (되돌릴 곳을 잃으면 안 된다). */
+#mlr-overlay.mlr-peek #mlr-panel {
+  opacity: 0.12;
+}
+
+#mlr-overlay.mlr-hidden #mlr-panel {
+  opacity: 0.3;
+}

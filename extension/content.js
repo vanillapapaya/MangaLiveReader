@@ -531,6 +531,7 @@ const PANEL_HTML = `
     <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
     <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
     <button data-act="status" title="왼쪽 위 상태줄 켜기/끄기">상태</button>
+    <button data-act="hide"   title="오버레이를 감춘다 (다시 눌러 되돌린다)&#10;백틱 키를 누르고 있으면 그동안만 잠깐 감춘다">숨김</button>
     <button data-act="drop"   title="이 페이지의 캐시만 지운다 (다시 읽지는 않는다)">캐시삭제</button>
   </div>
 </div>`;
@@ -604,6 +605,10 @@ function bindPanel(root) {
         if (speaking) stopSpeaking();
         else speakAll();
         break;
+      case "hide":
+        root.classList.toggle("mlr-hidden");
+        syncPanel();
+        break;
       case "drop":
         send({ type: "purge-page" });
         break;
@@ -631,6 +636,7 @@ function syncPanel() {
   on("status", !root.classList.contains("mlr-hide-status"));
   on("speak", speaking);
   on("more", !root.querySelector("#mlr-panel .mlr-rest")?.hidden);
+  on("hide", root.classList.contains("mlr-hidden"));
 }
 
 function reset() {
@@ -1473,6 +1479,42 @@ function fillTranslation(tr) {
   // 그때마다 다시 배치한다 (박스 20개 규모라 비용이 무시할 만하다).
   layoutLabels();
 }
+
+// ---------------------------------------------------------------------------
+// 잠깐 숨기기
+//
+// 원문 그림을 확인하고 싶을 때가 있다 — 박스가 말풍선을 가리거나, 번역이 맞는지
+// 원문 획을 보고 싶을 때.
+//
+// **누르고 있는 동안만** 사라진다. 토글이면 "다시 켜는 것" 을 기억해야 하는데,
+// 잠깐 보는 용도에는 누르고 있는 쪽이 손이 덜 간다. 길게 볼 일이 있으면 패널의
+// 「숨김」 으로 고정할 수 있다.
+// ---------------------------------------------------------------------------
+
+const PEEK_KEY = "Backquote"; // ` — 뷰어 단축키와 겹칠 일이 거의 없다
+
+function setPeek(on) {
+  const root = document.getElementById(OVERLAY_ID);
+  if (root) root.classList.toggle("mlr-peek", on);
+}
+
+addEventListener("keydown", (e) => {
+  // 입력란에 타이핑 중이면 안 된다.
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (e.code === PEEK_KEY && !e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    setPeek(true);
+  }
+}, true);
+
+addEventListener("keyup", (e) => {
+  if (e.code === PEEK_KEY) setPeek(false);
+}, true);
+
+// 키를 누른 채 탭을 옮기면 keyup 을 못 받는다. 돌아왔을 때 계속 숨어 있으면
+// "사라졌다" 로 보이므로 되돌린다.
+addEventListener("blur", () => setPeek(false));
 
 /** `Alt+Shift+L` 로 라벨 전체 펼치기/접기.
  *
