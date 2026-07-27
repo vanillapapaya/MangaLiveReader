@@ -362,7 +362,15 @@ async function schedule(tab, fast = false) {
 /** 캡처해서 해시가 달라졌을 때만 읽는다. */
 async function check(tab, fast = false) {
   const st = await loadState(tab.id);
-  if (!st || st.busy) return;
+  if (!st) return;
+  // **읽는 중에 온 신호를 버리면 안 된다.** `busy` 는 검출·OCR 뿐 아니라 **번역
+  // 5-10초 내내** 잡혀 있다. 그 사이 페이지를 넘기면(빨리 두 장 넘기면 늘 그렇다)
+  // 그 넘김이 통째로 사라져, 읽기가 끝난 뒤에도 옛 페이지 번역이 남는다.
+  // 표시만 해 두고 끝나면 다시 본다.
+  if (st.busy) {
+    st.pending = true;
+    return;
+  }
   // **간격 제한에 걸렸다고 그냥 버리면 안 된다.** 페이지를 빨리 넘기면 그 넘김이
   // 통째로 사라져 자동 번역이 안 걸린다. 남은 시간만큼 미뤘다가 다시 본다.
   const wait = AUTO_MIN_INTERVAL_MS - (Date.now() - st.lastAt);
@@ -413,6 +421,11 @@ async function check(tab, fast = false) {
     await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
   } finally {
     st.busy = false;
+    // 읽는 동안 페이지가 또 넘어갔으면 지금 화면을 다시 본다.
+    if (st.pending) {
+      st.pending = false;
+      schedule(tab, true);
+    }
   }
 }
 
