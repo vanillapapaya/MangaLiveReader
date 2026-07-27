@@ -119,12 +119,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     case "hide-overlay":
       overlay().style.visibility = "hidden";
-      sendResponse({ ok: true });
+      // **그려질 때까지 기다렸다가 응답한다.** 스타일만 바꾸고 바로 답하면 브라우저가
+      // 아직 다시 그리기 전이라 `captureVisibleTab` 이 **오버레이가 있는 프레임**을
+      // 찍는다 — 상태줄·박스 글자가 검출기에 들어가 번역된다.
+      //
+      // 탭이 뒤로 가면 `requestAnimationFrame` 이 아예 안 돈다. 그때 응답을 영영
+      // 안 보내면 background 가 그 자리에서 멎으므로 시간 제한을 같이 건다.
+      {
+        let done = false;
+        const reply = () => {
+          if (done) return;
+          done = true;
+          sendResponse({ ok: true });
+        };
+        requestAnimationFrame(() => requestAnimationFrame(reply));
+        setTimeout(reply, 120);
+      }
       return true;
     case "show-overlay":
-      // 자동 감지가 "안 바뀌었다" 로 끝났을 때 되돌린다. 이게 없으면 확인할 때마다
-      // 오버레이가 깜빡인다.
-      overlay().style.visibility = "visible";
+      showOverlay();
       sendResponse({ ok: true });
       return true;
     case "select-region":
@@ -167,6 +180,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // 페이지가 바뀌었으면 신원도 바뀐다. 부분 읽기는 조각의 해시라 안 쓴다.
         pageKey = msg.pageKey || null;
       }
+      showOverlay(); // 캡처가 끝났으니 되돌린다
       status(`검출 중… (${msg.elapsed}ms)`);
       break;
     case "status":
@@ -210,6 +224,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       else saveEdits();
       break;
     case "error":
+      showOverlay(); // 캡처 도중 실패했으면 숨은 채로 남아 있다
       status(`오류: ${msg.data.message}`, true);
       break;
   }
@@ -519,21 +534,40 @@ function cancelSelection() {
 // 부르는 순간 바로 깨진다.
 // 버튼 여덟 개를 늘 띄워 두면 화면을 가리고, 정작 쓰는 것은 두셋이다.
 // **자주 쓰는 셋만 보이고 나머지는 「⋯」 안에 접는다.**
+//: 버튼 정의. **한 곳에서만 관리한다** — 예전에는 이름·설명·단축키가 HTML 문자열
+//: 안에 흩어져 있어 단축키를 바꿀 때 놓치기 쉬웠다.
+//:
+//: 툴팁은 브라우저 기본 `title` 을 쓰지 않는다. 뜨는 데 1초 넘게 걸리고 위치도
+//: 못 정해서, 마우스를 올린 순간 단축키를 알려 주는 용도로는 못 쓴다.
+const PANEL_BUTTONS = [
+  { act: "read", label: "번역", key: "Alt+Shift+M", desc: "이 페이지를 캡처해 번역한다 · Shift+클릭이면 캐시를 지우고 다시" },
+  { act: "select", label: "영역", key: "Alt+Shift+D", desc: "읽을 영역을 드래그로 고른다" },
+  { act: "auto", label: "자동", key: null, desc: "페이지가 넘어가면 알아서 다시 읽는다" },
+];
+
+const PANEL_MORE = [
+  { act: "fresh", label: "갱신", key: "Alt+Shift+R", desc: "이 페이지의 캐시를 지우고 다시 번역한다" },
+  { act: "speak", label: "음성", key: null, desc: "원문을 읽기 순서대로 소리내어 읽는다" },
+  { act: "labels", label: "라벨", key: "Alt+Shift+L", desc: "라벨 전체 펼치기/접기" },
+  { act: "extra", label: "효과음", key: "Alt+Shift+S", desc: "숨긴 효과음·잡문 보기" },
+  { act: "status", label: "상태", key: null, desc: "왼쪽 위 상태줄 켜기/끄기" },
+  { act: "hide", label: "숨김", key: "` (누르는 동안)", desc: "오버레이를 감춘다. 버튼은 고정, 백틱은 누르는 동안만" },
+  { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지의 캐시만 지운다 (다시 읽지는 않는다)" },
+];
+
+const btnHtml = (b) =>
+  `<button data-act="${b.act}" data-desc="${escapeHtml(b.desc)}"` +
+  (b.key ? ` data-key="${escapeHtml(b.key)}"` : "") +
+  `>${b.label}</button>`;
+
 const PANEL_HTML = `
 <div id="mlr-panel">
-  <button data-act="read"   title="이 페이지를 캡처해 번역한다 (Alt+Shift+M)&#10;Shift+클릭 = 캐시 지우고 다시 (Alt+Shift+R)">번역</button>
-  <button data-act="select" title="읽을 영역을 드래그로 고르기 (Alt+Shift+D)">영역</button>
-  <button data-act="auto"   title="페이지가 넘어가면 자동으로 읽는다">자동</button>
-  <button data-act="more"   title="나머지 기능" class="mlr-more">⋯</button>
+  ${PANEL_BUTTONS.map(btnHtml).join("\n  ")}
+  <button data-act="more" class="mlr-more" data-desc="나머지 기능">⋯</button>
   <div class="mlr-rest" hidden>
-    <button data-act="fresh"  title="이 페이지의 캐시를 지우고 다시 번역한다 (Alt+Shift+R)">갱신</button>
-    <button data-act="speak"  title="원문을 읽기 순서대로 소리내어 읽는다">음성</button>
-    <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
-    <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
-    <button data-act="status" title="왼쪽 위 상태줄 켜기/끄기">상태</button>
-    <button data-act="hide"   title="오버레이를 감춘다 (다시 눌러 되돌린다)&#10;백틱 키를 누르고 있으면 그동안만 잠깐 감춘다">숨김</button>
-    <button data-act="drop"   title="이 페이지의 캐시만 지운다 (다시 읽지는 않는다)">캐시삭제</button>
+    ${PANEL_MORE.map(btnHtml).join("\n    ")}
   </div>
+  <div id="mlr-tip" hidden></div>
 </div>`;
 
 /** 자동 감지가 켜져 있는가. background 가 `auto-state` 로 알려 준다. */
@@ -549,8 +583,18 @@ function overlay() {
     document.documentElement.appendChild(el);
     bindPanel(el);
   }
-  el.style.visibility = "visible";
   return el;
+}
+
+/** 오버레이를 보이게 한다. **`overlay()` 는 이걸 하지 않는다.**
+ *
+ * 예전에는 `overlay()` 가 부를 때마다 `visibility = "visible"` 로 되돌렸다. 그런데
+ * `status()` 도 `overlay()` 를 부른다 — 숨겨 놓은 사이에 상태 메시지가 한 번이라도
+ * 나가면 **오버레이가 도로 켜지고, 그 상태로 캡처돼 상태줄 글자가 번역된다.**
+ * 켜는 것은 켜려는 곳에서만 명시적으로 한다.
+ */
+function showOverlay() {
+  overlay().style.visibility = "visible";
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +609,25 @@ function overlay() {
 // ---------------------------------------------------------------------------
 
 function bindPanel(root) {
-  root.querySelector("#mlr-panel").addEventListener("click", (e) => {
+  const panel = root.querySelector("#mlr-panel");
+  const tip = root.querySelector("#mlr-tip");
+
+  // 마우스를 올린 버튼의 설명과 단축키를 패널 왼쪽에 띄운다.
+  panel.addEventListener("pointerover", (e) => {
+    const b = e.target?.closest?.("button[data-desc]");
+    if (!b) return;
+    tip.innerHTML =
+      `<span class="mlr-tip-desc">${escapeHtml(b.dataset.desc)}</span>` +
+      (b.dataset.key ? `<kbd>${escapeHtml(b.dataset.key)}</kbd>` : "");
+    tip.hidden = false;
+    // 그 버튼 높이에 맞춰 놓는다 — 어느 버튼 설명인지 눈으로 이어져야 한다.
+    tip.style.top = `${b.offsetTop}px`;
+  });
+  panel.addEventListener("pointerleave", () => {
+    tip.hidden = true;
+  });
+
+  panel.addEventListener("click", (e) => {
     const act = e.target?.dataset?.act;
     if (!act) return;
     e.preventDefault();
