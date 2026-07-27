@@ -388,36 +388,32 @@ async function check(tab, fast = false) {
     //
     // **오버레이를 숨길지는 신호의 성격에 따라 다르다.**
     //
-    //   DOM 변화(`fast=false`) — 광고·애니메이션이라 넘김이 아닐 때가 대부분이다.
-    //     숨겼다 되살리면 가만히 있는데도 화면이 깜빡인다. 숨기지 않는다.
-    //   사람이 넘김(`fast=true`) — 클릭·방향키. 넘김이 거의 확실하다. 숨기면
-    //     ① 옛 번역이 새 그림 위에 얹혀 있는 시간이 사라지고
-    //     ② 바뀌었을 때 이 캡처를 **그대로 읽기에 넘겨** 캡처를 한 번 아낀다
-    //        (읽기가 150-200ms 빨라진다).
-    //     깜빡임은 넘김 동작에 묻힌다.
-    const prepared = await prepare(tab, null, true, !fast);
+    //   **확인은 언제나 오버레이를 켠 채로 한다.**
+    //
+    //   예전에는 클릭·방향키(`fast`)일 때 숨기고 찍었다. "넘김이 거의 확실하니
+    //   깜빡임은 동작에 묻힌다" 고 봤는데 **틀렸다** — 클릭 대부분은 넘김이 아니다
+    //   (메뉴바를 부르거나 그냥 화면을 누르는 것). 안 바뀌었으면 되살리느라
+    //   깜빡이고, 그게 잦다.
+    //
+    //   비교하는 두 캡처에 같은 오버레이가 똑같이 찍히므로 판정에는 지장이 없다.
+    const prepared = await prepare(tab, null, true, true);
     // 바뀌었든 아니든 확인한 시각을 남긴다. 안 그러면 "안 바뀜" 이 이어질 때
     // 확인이 몰려 캡처가 잦아진다.
     st.lastAt = Date.now();
 
-    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) {
-      // 같은 화면이다. 숨겼다면 되돌린다.
-      if (fast) await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
-      return;
-    }
+    // 같은 화면이면 **아무것도 건드리지 않고** 끝낸다 — 숨긴 적이 없으니 되살릴
+    // 것도 없다. 여기가 대부분의 경우다.
+    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) return;
 
     st.lastHash = prepared.ahash;
     saveState(tab.id, st);
-    if (fast) {
-      // 오버레이 없이 찍은 캡처다. 그대로 읽기에 넘긴다 — 캡처를 한 번 아끼고,
-      // 화면에는 이미 옛 박스가 사라진 상태라 새 그림만 보인다.
-      await run(tab, null, prepared);
-    } else {
-      // 오버레이가 찍혀 있어 OCR 에 못 쓴다. 새로 찍어야 하는데 그동안 옛 번역이
-      // 새 그림 위에 얹혀 있으므로, 먼저 흐리게 해 둔다.
-      chrome.tabs.sendMessage(tab.id, { type: "stale" }).catch(() => {});
-      await run(tab);
-    }
+    // 바뀐 것이 확정됐다. 이제부터 화면이 한 번 깜빡이는 것은 **읽기 때문**이고,
+    // 그건 새 페이지가 뜨는 순간이라 눈에 덜 띈다.
+    //
+    // 이 캡처는 오버레이가 찍혀 있어 OCR 에 못 쓴다. 새로 찍는 동안 옛 번역이
+    // 새 그림 위에 얹혀 있으므로 먼저 흐리게 해 둔다.
+    chrome.tabs.sendMessage(tab.id, { type: "stale" }).catch(() => {});
+    await run(tab);
   } catch {
     // 탭이 닫혔거나 캡처가 막혔다. 다음 신호에서 다시 해 본다.
     await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
@@ -494,6 +490,10 @@ async function purgeCache(tab, body) {
  * 열 때 새로 읽는다.
  *
  * 캐시 키는 화면 픽셀의 해시라 **지금 화면을 한 번 찍어야** 무엇을 지울지 안다.
+ *
+ * **여기서는 오버레이를 숨긴다** (자동 감지의 확인과 다르다). 캐시 키는 읽을 때
+ * 오버레이 없이 찍은 해시라, 켠 채로 찍으면 키가 달라져 정작 그 페이지를 못 지운다.
+ * 손으로 누른 동작이라 한 번 깜빡이는 것은 괜찮다.
  */
 async function purgePage(tab) {
   try {
