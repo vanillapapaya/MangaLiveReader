@@ -599,6 +599,18 @@ async function run(tab, override = null, prepared = null, opts = {}) {
       no_cache: Boolean(override),
       // 「갱신」 — 이 페이지의 낡은 캐시를 지우고 다시 읽는다. 새 결과는 저장한다.
       refresh: Boolean(opts.refresh),
+      // **번역할 범위를 전송 이미지 좌표로 넘긴다.** 「영역」·「다시 읽기」는 검출기에
+      // 문맥을 주려고 3배 넓게 보내는데, 그 안을 전부 번역하면 클라이언트가 버릴
+      // 것에까지 돈을 낸다. 뷰포트 CSS → 전송 이미지: (좌표 - 잘라낸 원점) × 배율.
+      clip:
+        probe.clip && probe.rect
+          ? [
+              Math.round((probe.clip.x - probe.rect.x) * probe.dpr * scale),
+              Math.round((probe.clip.y - probe.rect.y) * probe.dpr * scale),
+              Math.round(probe.clip.width * probe.dpr * scale),
+              Math.round(probe.clip.height * probe.dpr * scale),
+            ]
+          : null,
     };
     const form = new FormData();
     form.append("image", blob, "page.jpg");

@@ -41,6 +41,12 @@ class ReadMeta:
     #: True 면 이 페이지의 낡은 캐시를 **지우고** 다시 읽는다. 새 결과는 저장한다.
     #: `no_cache`(읽지도 쓰지도 않음)와 달리 전체 페이지 갱신용이다.
     refresh: bool = False
+    #: 번역할 범위 [x, y, w, h] (전송 이미지 좌표). 밖의 region 은 **번역하지 않는다.**
+    #:
+    #: 「영역」·「다시 읽기」는 검출기에 문맥을 주려고 고른 것보다 3배 넓게 잘라
+    #: 보낸다(DEVLOG 참조). 예전에는 서버가 그 안을 **전부 번역하고** 클라이언트가
+    #: 범위 밖을 버렸다 — 버릴 것에 돈을 냈다.
+    clip: list[int] | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ReadMeta:

@@ -459,3 +459,62 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* ---------------------------------------------------------------------------
+   지금 뭐 하는 중인지 (오른쪽 아래)
+
+   상태줄(왼쪽 위)과 **따로** 둔다. 상태줄은 만화를 가려서 꺼 두는 경우가 많은데,
+   그러면 번역 중인지·끊긴 건지·멈춘 건지 알 방법이 없다.
+
+   오른쪽 아래 구석이라 만화를 거의 안 가린다. 「상태」 토글과 무관하게 뜬다 —
+   이건 정보가 아니라 **살아 있다는 신호**다.
+   --------------------------------------------------------------------------- */
+
+#mlr-busy {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: rgba(20, 20, 24, 0.82);
+  border-radius: 12px;
+  font: 11px/1 "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  color: #d8d8dc;
+  pointer-events: none;
+  z-index: 9;
+}
+
+#mlr-busy[hidden] {
+  display: none;
+}
+
+#mlr-busy .mlr-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 176, 32, 0.95);
+  animation: mlr-bounce 1s infinite ease-in-out;
+}
+
+#mlr-busy .mlr-dot:nth-child(2) { animation-delay: 0.15s; }
+#mlr-busy .mlr-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes mlr-bounce {
+  0%, 70%, 100% { opacity: 0.25; transform: translateY(0); }
+  35%           { opacity: 1;    transform: translateY(-3px); }
+}
+
+/* 끝났거나 실패했으면 점은 멈춘다 — 움직이는 것은 "돌고 있다" 는 뜻이어야 한다. */
+#mlr-busy.mlr-busy-error .mlr-dot {
+  animation: none;
+  opacity: 1;
+  background: rgba(255, 96, 96, 0.95);
+}
+
+/* 잠깐 숨기기(백틱)·고정 숨김에는 이것도 같이 사라진다 */
+#mlr-overlay.mlr-peek #mlr-busy,
+#mlr-overlay.mlr-hidden #mlr-busy {
+  visibility: hidden;
+}

@@ -187,6 +187,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         pageKey = msg.pageKey || null;
       }
       showOverlay(); // 캡처가 끝났으니 되돌린다
+      setBusy(true, "읽는 중");
       status(`검출 중… (${msg.elapsed}ms)`);
       break;
     case "status":
@@ -217,12 +218,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
         }
         status(`원문 ${drawn}개 · ${msg.elapsed}ms`);
+        setBusy(true, `번역 중 0/${drawn}`);
       }
       break;
     case "translation":
       fillTranslation(msg.data);
+      {
+        const root = document.getElementById(OVERLAY_ID);
+        const done = root?.querySelectorAll(".mlr-box.mlr-translated").length ?? 0;
+        const all = root?.querySelectorAll(".mlr-box").length ?? 0;
+        setBusy(true, `번역 중 ${done}/${all}`);
+      }
       break;
     case "done":
+      flashBusy(msg.data.timings.translate ? "완료" : "캐시");
       status(`완료 ${msg.elapsed}ms · 번역 ${msg.data.timings.translate}ms`);
       // 손으로 더한 박스를 되살린다. 전체 읽기가 끝난 뒤라야 지울 것/더할 것을
       // 제자리에 맞출 수 있다.
@@ -231,6 +240,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       break;
     case "error":
       showOverlay(); // 캡처 도중 실패했으면 숨은 채로 남아 있다
+      flashBusy("실패", true);
       status(`오류: ${msg.data.message}`, true);
       break;
   }
@@ -574,7 +584,8 @@ const PANEL_HTML = `
     ${PANEL_MORE.map(btnHtml).join("\n    ")}
   </div>
   <div id="mlr-tip" hidden></div>
-</div>`;
+</div>
+<div id="mlr-busy" hidden><span class="mlr-dot"></span><span class="mlr-dot"></span><span class="mlr-dot"></span><b></b></div>`;
 
 /** 자동 감지가 켜져 있는가. background 가 `auto-state` 로 알려 준다. */
 let autoOn = false;
@@ -712,6 +723,50 @@ function syncPanel() {
 
 function reset() {
   overlay().querySelector("#mlr-boxes").innerHTML = "";
+}
+
+// ---------------------------------------------------------------------------
+// 지금 뭐 하는 중인지 (오른쪽 아래)
+//
+// 상태줄을 끄고 보는 경우가 많다 — 만화를 가리기 때문이다. 그러면 **번역 중인지,
+// 서버가 끊긴 건지, 그냥 멈춘 건지** 알 방법이 없다. 박스가 안 사라지는 이유를
+// 가늠할 수 없다는 제보.
+//
+// 상태줄과 **따로** 둔다. 오른쪽 아래 구석이라 만화를 거의 안 가리고, 점 세 개가
+// 움직이는 동안에는 "돌고 있다" 는 것이 한눈에 보인다.
+// ---------------------------------------------------------------------------
+
+let busyTimer = null;
+
+function setBusy(on, label = "") {
+  const el = document.getElementById(OVERLAY_ID)?.querySelector("#mlr-busy");
+  if (!el) return;
+  clearTimeout(busyTimer);
+  el.querySelector("b").textContent = label;
+  el.classList.toggle("mlr-busy-error", false);
+  if (on) {
+    el.hidden = false;
+    // **영영 도는 것처럼 보이면 안 된다.** 서버가 조용히 끊기면 done 이 안 오는데,
+    // 그때 계속 돌고 있으면 "멈춘 건지 도는 건지" 를 또 알 수 없다.
+    busyTimer = setTimeout(() => {
+      el.classList.add("mlr-busy-error");
+      el.querySelector("b").textContent = "응답 없음";
+      busyTimer = setTimeout(() => (el.hidden = true), 6000);
+    }, 45000);
+  } else {
+    el.hidden = true;
+  }
+}
+
+/** 끝났다는 표시를 잠깐 보여 준다. */
+function flashBusy(label, isError = false) {
+  const el = document.getElementById(OVERLAY_ID)?.querySelector("#mlr-busy");
+  if (!el) return;
+  clearTimeout(busyTimer);
+  el.hidden = false;
+  el.classList.toggle("mlr-busy-error", isError);
+  el.querySelector("b").textContent = label;
+  busyTimer = setTimeout(() => (el.hidden = true), isError ? 5000 : 1200);
 }
 
 function status(text, isError = false) {

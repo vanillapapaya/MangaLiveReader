@@ -49,6 +49,17 @@ _cache = PageCache(
 _translator: translate.Translator | None = None
 _translator_lock = asyncio.Lock()
 
+# ---------------------------------------------------------------------------
+# 같은 페이지를 동시에 두 번 번역하지 않는다
+#
+# 실측 로그에서 **같은 이미지를 3초 안에 네 번** 번역한 것이 나왔다 (한 번에 11초,
+# 전부 돈이 나간다). 자동 감지와 손동작이 겹치거나 페이지를 빨리 넘기면 그렇게 된다.
+#
+# 먼저 온 것이 끝날 때까지 나머지는 기다렸다가 **그 결과를 캐시에서 받는다.**
+# 지연은 어차피 첫 번째를 기다리는 것과 같고, 비용은 한 번만 든다.
+# ---------------------------------------------------------------------------
+_inflight: dict[tuple[str, str, str], asyncio.Event] = {}
+
 
 async def get_translator() -> translate.Translator | None:
     global _translator
@@ -273,26 +284,74 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
 
         yield sse("ocr", {"regions": regions})
 
+        # **번역할 것만 남긴다.** 「영역」·「다시 읽기」는 검출기에 문맥을 주려고 고른
+        # 것보다 3배 넓게 잘라 보낸다. 예전에는 그 안을 전부 번역하고 클라이언트가
+        # 범위 밖을 버렸다 — **버릴 것에 돈을 냈다.**
+        #
+        # 중심으로 판정한다 (클라이언트의 `inClip` 과 같은 규칙) — 경계에 걸친
+        # 말풍선을 버리면 정작 고른 것이 빠진다.
+        to_translate = regions
+        if parsed.clip:
+            cx, cy, cw, ch = parsed.clip
+            to_translate = [
+                r
+                for r in regions
+                if cx <= r["bbox"][0] + r["bbox"][2] / 2 <= cx + cw
+                and cy <= r["bbox"][1] + r["bbox"][3] / 2 <= cy + ch
+            ]
+
         # -- 번역 -----------------------------------------------------------
         translate_ms = 0
+        collected: list[dict[str, object]] = []
+        usage: dict[str, object] | None = None
         if hit is not None and hit.translation is not None:
             for tr in hit.translation:
                 yield sse("translation", tr)
-        elif regions:
+        elif to_translate:
+            key = (parsed.phash, parsed.profile, parsed.mode)
+
+            # 같은 페이지가 이미 번역 중이면 기다렸다가 그 결과를 쓴다.
+            waiting = _inflight.get(key)
+            if waiting is not None and not parsed.no_cache:
+                try:
+                    await asyncio.wait_for(waiting.wait(), timeout=90)
+                except (TimeoutError, asyncio.TimeoutError):
+                    pass
+                again = _cache.get(parsed.phash, parsed.profile, parsed.mode)
+                if again is not None and again.translation is not None:
+                    for tr in again.translation:
+                        yield sse("translation", tr)
+                    timings.translate = 0
+                    timings.total = int((time.perf_counter() - t_start) * 1000)
+                    yield sse("done", {"reordered": False, "timings": timings.to_dict()})
+                    return
+
+            done_evt = asyncio.Event()
+            _inflight[key] = done_evt
             t0 = time.perf_counter()
-            collected: list[dict[str, object]] = []
-            async for kind, payload in _translate_stream(regions, parsed):
-                if kind == "error":
-                    # 번역만 실패한 것이다. 원문은 이미 흘렸으므로 스트림을 죽이지
-                    # 않고 알리기만 한다 — 클라이언트는 L1 핀으로 원문을 읽는다.
-                    yield sse("error", {"stage": "translate", "message": payload})
-                    break
-                collected.append(payload)
-                yield sse("translation", payload)
-            translate_ms = int((time.perf_counter() - t0) * 1000)
-            if collected:
-                if not parsed.no_cache:
+            try:
+                async for kind, payload in _translate_stream(to_translate, parsed):
+                    if kind == "usage":
+                        usage = payload
+                        continue
+                    if kind == "error":
+                        # 번역만 실패한 것이다. 원문은 이미 흘렸으므로 스트림을 죽이지
+                        # 않고 알리기만 한다 — 클라이언트는 L1 핀으로 원문을 읽는다.
+                        yield sse("error", {"stage": "translate", "message": payload})
+                        break
+                    collected.append(payload)
+                    yield sse("translation", payload)
+            finally:
+                # **`finally` 여야 한다.** 클라이언트가 스트림을 끊으면(페이지를 넘기거나
+                # 새 읽기가 시작되면) 위 루프가 중단되는데, 예전에는 그때
+                # `put_translation` 이 영영 안 불렸다. 그 페이지는 OCR 만 캐시되고
+                # 번역은 **매번 새로** — 실측에서 같은 이미지를 3초에 네 번 번역한
+                # 원인이다. 받은 데까지라도 저장한다.
+                if collected and not parsed.no_cache:
                     _cache.put_translation(parsed.phash, parsed.mode, collected)
+                _inflight.pop(key, None)
+                done_evt.set()
+            translate_ms = int((time.perf_counter() - t0) * 1000)
 
         timings.translate = translate_ms
         timings.total = int((time.perf_counter() - t_start) * 1000)
@@ -305,6 +364,17 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
             regions=len(regions),
             upload_bytes=upload_bytes,
             cached=hit is not None,
+            translated=len(collected),
+            **(
+                {
+                    "tokens_in": usage["in"],
+                    "tokens_out": usage["out"],
+                    "tokens_cached": usage["cached"],
+                    "model": usage["model"],
+                }
+                if usage
+                else {}
+            ),
             **timings.to_dict(),
         )
     except Exception as exc:  # 여기까지 오면 스트림을 닫는다 (§4.1)
@@ -347,7 +417,8 @@ async def _translate_stream(regions: list[dict[str, object]], parsed: ReadMeta):
 
     def pump() -> None:
         try:
-            for tr in translator.translate_stream(stubs, parsed.mode, previous):
+            stream = translator.translate_stream(stubs, parsed.mode, previous)
+            for tr in stream:
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
                     (
@@ -359,6 +430,22 @@ async def _translate_stream(regions: list[dict[str, object]], parsed: ReadMeta):
                             # 스크린톤 배경에서 틀리므로 필터로 쓰면 안 된다 (DEVLOG).
                             "kind": tr.kind,
                             "note": tr.note or None,
+                        },
+                    ),
+                )
+            # 스트림을 다 소진해야 토큰 수가 채워진다. **비용이 보여야 한다** —
+            # 안 보이면 오늘처럼 모르는 사이에 샌다.
+            res = getattr(stream, "result", None)
+            if res is not None:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    (
+                        "usage",
+                        {
+                            "in": res.input_tokens,
+                            "out": res.output_tokens,
+                            "cached": res.cached_tokens,
+                            "model": res.model,
                         },
                     ),
                 )

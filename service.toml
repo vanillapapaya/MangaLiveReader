@@ -83,8 +83,13 @@ min_gap_ratio = 0.015
 # Haiku 4.5 는 (1) 캐시 최소 길이가 4096 토큰이라 번역 프롬프트가 조용히 캐시되지
 # 않고 (2) effort/adaptive thinking 을 400 으로 거부한다. 2계층을 정당화할 측정도
 # 아직 없어서 둘 다 Sonnet 5 로 둔다. 계층을 나누려면 먼저 재 볼 것.
-model_fast = "claude-sonnet-5"
-model_quality = "claude-sonnet-5"
+# **테스트 중에는 Gemini 를 쓴다** — 무료 크레딧이 있다.
+#
+# 품질·비용 비교는 `DEVLOG.md` 에 있다 (Sonnet 5 가 200쪽 $1.64, Gemini $2.44 —
+# 단가는 Gemini 가 절반인데 사고 토큰이 3.3배라 실제로는 더 비싸다). 유료로 계속
+# 쓸 때는 claude-sonnet-5 로 되돌릴 것.
+model_fast = "gemini-3.6-flash"
+model_quality = "gemini-3.6-flash"
 # Anthropic 모델의 effort. low/medium 이 지연 차이가 거의 없었고(둘 다 8-9초)
 # medium 에서 오히려 품질이 흔들린 적이 있어 low 로 둔다.
 effort = "low"
