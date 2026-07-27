@@ -39,6 +39,16 @@
   <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
 </p>
 
+<h2 style="margin-top:32px;font-size:15px">자동으로 켜질 사이트</h2>
+<p class="hint">
+  여기 적은 사이트에서는 「자동」이 알아서 켜진다 — 페이지를 넘기면 다시 번역한다.
+  한 줄에 하나. 뒤에서부터 맞추므로 <code>yanmaga.jp</code> 는
+  <code>www.yanmaga.jp</code> 에도 걸린다.
+  <br /><b>뷰어가 실제로 있을 때만 켜진다</b> — 목차 페이지에서는 안 켜진다.
+</p>
+<textarea id="autosites" rows="8" spellcheck="false"
+  style="width:100%;box-sizing:border-box;padding:6px 8px;font:13px/1.5 ui-monospace,Consolas,monospace"></textarea>
+
 <h2 style="margin-top:32px;font-size:15px">음성 (선택)</h2>
 <p class="hint">
   GPT-SoVITS 같은 음성 서버가 있으면 주소를 넣는다. 비우면 브라우저 내장 음성을 쓴다.

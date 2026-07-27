@@ -1761,6 +1761,54 @@ function throttle(fn, ms) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 만화 사이트면 「자동」을 알아서 켠다
+//
+// 매번 손으로 켜는 것이 번거롭다. 다만 **아무 데서나 켜면 안 된다** — 자동은
+// 화면을 캡처해 서버로 보내는 동작이라, 목차나 다른 페이지에서 돌면 헛돈다.
+//
+// 두 조건을 다 만족해야 켠다:
+//   1. 호스트가 목록에 있다 (옵션 화면에서 고칠 수 있다)
+//   2. **뷰어로 볼 만한 요소가 실제로 있다** — 목차 페이지에는 없다.
+//      `probeViewer()` 가 폴백(뷰포트 전체)으로 떨어지면 뷰어가 아니라고 본다.
+// ---------------------------------------------------------------------------
+
+function hostMatches(host, list) {
+  const h = host.toLowerCase();
+  return list
+    .split(/[\n,]/)
+    .map((x) => x.trim().toLowerCase().replace(/^\*?\.?/, ""))
+    .filter(Boolean)
+    .some((p) => h === p || h.endsWith("." + p));
+}
+
+async function maybeAutoEnable() {
+  if (autoOn || !alive()) return;
+  let sites;
+  try {
+    sites = (await chrome.storage.sync.get("autoSites")).autoSites;
+  } catch {
+    return;
+  }
+  if (sites === undefined) return; // 아직 저장 전이면 background 기본값을 모른다
+  if (!hostMatches(location.hostname, sites)) return;
+
+  // 뷰어가 실제로 있는지 본다. 없으면 목차 같은 페이지다.
+  let probe;
+  try {
+    probe = probeViewer();
+  } catch {
+    return;
+  }
+  if (!probe?.count) return;
+
+  send({ type: "set-auto", on: true });
+}
+
+// 뷰어는 대개 늦게 그려진다. 몇 번 나눠 본다 — 첫 시도에 없다고 포기하면
+// 지연 로딩하는 사이트에서 영영 안 켜진다.
+for (const ms of [800, 2000, 4500]) setTimeout(maybeAutoEnable, ms);
+
 // 음성 목록을 미리 받아 둔다. `speak()` 직전에 await 가 길면 사용자 제스처 문맥이
 // 끊겨 Chrome 이 재생을 막는 경우가 있다.
 try {

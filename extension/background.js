@@ -23,6 +23,17 @@ const DEFAULTS = {
   // 음성 합성 서버 (GPT-SoVITS). 비우면 브라우저 내장 음성을 쓴다.
   ttsUrl: "",
   ttsVoice: "",
+  //: 이 호스트들에서는 「자동」이 알아서 켜진다. 한 줄에 하나.
+  //: 뒤에서부터 맞춘다 — `yanmaga.jp` 는 `www.yanmaga.jp` 에도 걸린다.
+  autoSites: [
+    "comic-walker.com",
+    "yanmaga.jp",
+    "shonenjumpplus.com",
+    "sunday-webry.com",
+    "comic-fuz.com",
+    "comic-growl.com",
+    "ichijin-plus.com",
+  ].join("\n"),
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +83,29 @@ async function ttsSpeak(text, lang) {
 async function settings() {
   return { ...DEFAULTS, ...(await chrome.storage.sync.get(Object.keys(DEFAULTS))) };
 }
+
+/** 기본값을 저장소에 심는다.
+ *
+ * 콘텐츠 스크립트는 `chrome.storage` 를 직접 읽는데, 저장된 적이 없으면 background 의
+ * `DEFAULTS` 를 알 길이 없다 — 사이트 목록이 비어 보여 자동이 영영 안 켜진다.
+ * **이미 있는 값은 건드리지 않는다.**
+ */
+async function seedDefaults() {
+  try {
+    const got = await chrome.storage.sync.get(Object.keys(DEFAULTS));
+    const missing = {};
+    for (const [k, v] of Object.entries(DEFAULTS)) {
+      if (got[k] === undefined) missing[k] = v;
+    }
+    if (Object.keys(missing).length) await chrome.storage.sync.set(missing);
+  } catch {
+    /* 저장소가 막혀도 나머지는 돈다 */
+  }
+}
+
+chrome.runtime.onInstalled.addListener(seedDefaults);
+chrome.runtime.onStartup.addListener(seedDefaults);
+seedDefaults(); // 워커가 살아날 때마다 — 이미 있으면 아무것도 안 한다
 
 // DESIGN.md §5.4 — 서비스는 이 규격으로 정규화된 이미지만 본다.
 const MIN_SHORT_SIDE = 1200;
