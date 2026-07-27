@@ -20,6 +20,9 @@ let pageKey = null;
 /** 지운 박스의 중심(뷰어 기준 비율). 복원할 때 이 근처 박스를 다시 지운다. */
 let removedMarks = [];
 
+/** 마지막 probe 에서 본 뷰어 요소들. 박스가 스크롤을 따라가는 데 쓴다. */
+let viewerEls = [];
+
 // ---------------------------------------------------------------------------
 // 확장이 다시 로드되면 이 스크립트는 유령이 된다
 //
@@ -131,6 +134,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       status(msg.data.hit ? `캐시 적중 (${msg.elapsed}ms)` : `캐시 없음 (${msg.elapsed}ms)`);
       break;
     case "ocr":
+      // 지금 뷰어가 어디 있는지 박아 둔다. 이후 스크롤·확대는 이 기준으로 따라간다.
+      {
+        const live = viewerEls.filter((el) => el.isConnected);
+        if (live.length) {
+          const u = unionRects(live.map((el) => el.getBoundingClientRect()));
+          ctx.anchor = { left: u.left, top: u.top, width: u.right - u.left };
+        }
+        const b = overlay().querySelector("#mlr-boxes");
+        if (b) b.style.transform = "";
+      }
       drawBoxes(msg.data.regions);
       status(`원문 ${msg.data.regions.length}개 · ${msg.elapsed}ms`);
       break;
@@ -209,6 +222,8 @@ function probeViewer() {
     return overlap >= 0.6 * Math.min(c.r.height, seed.r.height);
   });
 
+  // 스크롤·확대를 따라가려면 **사각형이 아니라 요소**를 들고 있어야 한다.
+  viewerEls = group.map((c) => c.el);
   const rect = clampToViewport(unionRects(group.map((c) => c.r)), vw, vh);
   const tag =
     seed.el.tagName.toLowerCase() + (group.length > 1 ? ` ×${group.length}(펼침면)` : "");
@@ -402,16 +417,21 @@ function cancelSelection() {
 // **`overlay()` 보다 위에 둔다.** `const`/`let` 은 호이스팅돼도 초기화 전에는
 // 못 읽는다(TDZ). 지금은 `overlay()` 가 늦게 불려 안 터지지만, 누가 초기화 중에
 // 부르는 순간 바로 깨진다.
+// 버튼 여덟 개를 늘 띄워 두면 화면을 가리고, 정작 쓰는 것은 두셋이다.
+// **자주 쓰는 셋만 보이고 나머지는 「⋯」 안에 접는다.**
 const PANEL_HTML = `
 <div id="mlr-panel">
   <button data-act="read"   title="이 페이지를 캡처해 번역한다 (Alt+Shift+M)">번역</button>
-  <button data-act="fresh"  title="이 페이지의 캐시를 지우고 다시 번역한다">갱신</button>
   <button data-act="select" title="읽을 영역을 드래그로 고르기 (Alt+Shift+D)">영역</button>
   <button data-act="auto"   title="페이지가 넘어가면 자동으로 읽는다">자동</button>
-  <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
-  <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
-  <button data-act="status" title="왼쪽 위 상태줄 켜기/끄기">상태</button>
-  <button data-act="speak"  title="원문을 읽기 순서대로 소리내어 읽는다">음성</button>
+  <button data-act="more"   title="나머지 기능" class="mlr-more">⋯</button>
+  <div class="mlr-rest" hidden>
+    <button data-act="fresh"  title="이 페이지의 캐시를 지우고 다시 번역한다">갱신</button>
+    <button data-act="speak"  title="원문을 읽기 순서대로 소리내어 읽는다">음성</button>
+    <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
+    <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
+    <button data-act="status" title="왼쪽 위 상태줄 켜기/끄기">상태</button>
+  </div>
 </div>`;
 
 /** 자동 감지가 켜져 있는가. background 가 `auto-state` 로 알려 준다. */
@@ -481,6 +501,11 @@ function bindPanel(root) {
         if (speaking) stopSpeaking();
         else speakAll();
         break;
+      case "more": {
+        const rest = root.querySelector("#mlr-panel .mlr-rest");
+        rest.hidden = !rest.hidden;
+        break;
+      }
     }
   });
   syncPanel();
@@ -1122,6 +1147,57 @@ async function pruneEdits() {
 }
 
 // ---------------------------------------------------------------------------
+// 박스가 뷰어를 따라가게 한다
+//
+// 오버레이는 `position: fixed` 라 **뷰포트에 붙어 있다.** 스크롤하면 만화는 움직이는데
+// 박스는 그대로여서 엉뚱한 그림 위에 덕지덕지 남는다. 확대·창 크기 변경도 마찬가지다.
+//
+// 박스를 하나씩 다시 계산하지 않는다. `#mlr-boxes` 에 **변환 하나**만 걸면 된다 —
+// 읽을 때의 뷰어 사각형을 지금 사각형으로 보내는 변환이다. 스크롤(이동)과
+// 확대(배율)를 한 번에 처리하고 비용이 거의 없다.
+// ---------------------------------------------------------------------------
+
+let followPending = false;
+
+function followViewer() {
+  if (followPending) return;
+  followPending = true;
+  requestAnimationFrame(() => {
+    followPending = false;
+    doFollowViewer();
+  });
+}
+
+function doFollowViewer() {
+  const boxes = document.getElementById(OVERLAY_ID)?.querySelector("#mlr-boxes");
+  if (!boxes || !ctx?.rect) return;
+
+  const live = viewerEls.filter((el) => el.isConnected);
+  if (!live.length) return;
+  const now = unionRects(live.map((el) => el.getBoundingClientRect()));
+  const w = now.right - now.left;
+  if (w <= 0) return;
+
+  // 읽을 때 쓴 사각형은 뷰포트로 잘린 것(clampToViewport)이라, 지금 사각형과 바로
+  // 비교하면 안 된다. 요소 전체 사각형끼리 비교해야 한다.
+  if (!ctx.anchor) {
+    ctx.anchor = { left: now.left, top: now.top, width: w };
+    return;
+  }
+  const s = w / ctx.anchor.width;
+  const tx = now.left - ctx.anchor.left * s;
+  const ty = now.top - ctx.anchor.top * s;
+  boxes.style.transformOrigin = "0 0";
+  boxes.style.transform =
+    Math.abs(s - 1) < 0.001 && Math.abs(tx) < 0.5 && Math.abs(ty) < 0.5
+      ? ""
+      : `translate(${tx}px, ${ty}px) scale(${s})`;
+}
+
+addEventListener("scroll", followViewer, { passive: true, capture: true });
+addEventListener("resize", followViewer, { passive: true });
+
+// ---------------------------------------------------------------------------
 // 라벨 겹침 풀기
 //
 // 라벨은 박스 아래(또는 위)에 붙는다. 말풍선이 촘촘한 칸에서는 라벨끼리 겹쳐
@@ -1292,7 +1368,10 @@ try {
 } catch {}
 
 document.addEventListener("click", notifyMaybeChanged, true);
-document.addEventListener("wheel", notifyMaybeChanged, { capture: true, passive: true });
+// **휠은 신호에서 뺐다.** 스크롤은 페이지 넘김이 아닌 경우가 대부분인데, 확인할
+// 때마다 캡처하느라 오버레이가 숨었다 돌아와 **깜빡인다.** 게다가 이제 박스가
+// 뷰어를 따라가므로(followViewer) 스크롤해도 결과가 어긋나지 않아 다시 읽을 이유가
+// 없다. 스크롤로 새 페이지가 나타나는 뷰어는 DOM 변화가 같이 오므로 그쪽에 잡힌다.
 document.addEventListener(
   "keyup",
   (e) => {
