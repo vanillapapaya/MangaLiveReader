@@ -365,16 +365,37 @@ async function cropAndNormalize(dataUrl, rect, dpr) {
   return { blob, scale, ahash: averageHash(canvas) };
 }
 
-/** 16×16 평균 해시. 자동 감지가 "같은 화면인가" 를 판정하는 데만 쓴다.
+//: 해시를 계산할 때 볼 범위(가운데 비율).
+//:
+//: **뷰어 메뉴바를 무시하기 위한 것이다.** 만화 뷰어는 클릭하면 위에 제목 줄,
+//: 아래에 페이지 이동 줄이 뜬다. 그림은 그대로인데 픽셀이 바뀌어서, 전체를 보고
+//: 해시를 내면 **다른 페이지로 넘어간 것과 구별이 안 된다.**
+//:
+//: 실측(픽스처 8장, 위 9%·아래 11% 를 어둡게 덮어 메뉴바를 흉내):
+//:
+//:   범위          메뉴바로 인한 차이   다른 페이지 최소 거리
+//:   1.00 × 1.00   최대 98             100      ← 사실상 구별 불가
+//:   0.92 × 0.74   최대  0             100      ← 완전히 무시
+//:
+//: 위아래를 13% 씩 덜어내면 메뉴바가 해시를 아예 안 건드리고, 페이지 구별력은
+//: 그대로다. 좌우 4% 는 옆에 붙는 UI 몫이다.
+const HASH_CROP_X = 0.92;
+const HASH_CROP_Y = 0.74;
+
+/** 16×16 평균 해시. 자동 감지의 "같은 화면인가" 판정과 서버 캐시 키를 겸한다.
  *
  * 만화는 대부분 흰 바탕이라 8×8 로는 다른 페이지가 같게 나온다. 16×16(256비트)까지
  * 올려야 칸 배치 차이가 잡힌다.
  */
 function averageHash(canvas) {
   const N = 16;
+  const sw = canvas.width * HASH_CROP_X;
+  const sh = canvas.height * HASH_CROP_Y;
+  const sx = (canvas.width - sw) / 2;
+  const sy = (canvas.height - sh) / 2;
   const small = new OffscreenCanvas(N, N);
   const g = small.getContext("2d");
-  g.drawImage(canvas, 0, 0, N, N);
+  g.drawImage(canvas, sx, sy, sw, sh, 0, 0, N, N);
   const d = g.getImageData(0, 0, N, N).data;
   const lum = new Float64Array(N * N);
   let sum = 0;

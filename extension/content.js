@@ -723,23 +723,28 @@ function reread(box) {
 /** 전체 읽기가 도는 중인가. 패널 「음성」 버튼 상태와 같다. */
 let speaking = false;
 
-//: 음성 목록은 비동기로 채워진다. 처음 호출 때 비어 있을 수 있어 한 번 기다린다.
-let voicesReady = null;
+//: 음성 목록이 채워지기를 **한 번만** 기다린다. 결과는 캐시하지 않는다.
+let voicesWait = null;
 
-function loadVoices() {
-  if (voicesReady) return voicesReady;
-  voicesReady = new Promise((resolve) => {
-    const got = speechSynthesis.getVoices();
-    if (got.length) return resolve(got);
-    speechSynthesis.addEventListener(
-      "voiceschanged",
-      () => resolve(speechSynthesis.getVoices()),
-      { once: true }
-    );
-    // 이벤트가 영영 안 올 수도 있다 (플랫폼차). 빈 목록이면 브라우저 기본 음성을 쓴다.
-    setTimeout(() => resolve(speechSynthesis.getVoices()), 1000);
-  });
-  return voicesReady;
+/** 지금 쓸 수 있는 음성 목록. 비어 있으면 한 번 기다렸다가 다시 읽는다.
+ *
+ * **목록을 캐시하면 안 된다.** 예전에는 `loadVoices()` 가 결과 배열을 통째로
+ * 캐시했는데, 첫 호출이 목록이 채워지기 전이면 **빈 목록(또는 일부만 든 목록)이
+ * 영구히 굳었다.** 윈도우에 일본어 음성을 깔았는데도 계속 한국어로 읽히던 원인이다.
+ * `getVoices()` 는 싸므로 매번 새로 읽는다.
+ */
+async function loadVoices() {
+  let v = speechSynthesis.getVoices();
+  if (v.length) return v;
+  if (!voicesWait) {
+    voicesWait = new Promise((resolve) => {
+      speechSynthesis.addEventListener("voiceschanged", () => resolve(), { once: true });
+      // 이벤트가 영영 안 올 수도 있다 (플랫폼차).
+      setTimeout(resolve, 1500);
+    });
+  }
+  await voicesWait;
+  return speechSynthesis.getVoices();
 }
 
 //: 여성 음성 우선 목록. **Web Speech API 에는 성별 필드가 없다** — 이름으로 고르는
@@ -827,11 +832,19 @@ function say(text, lang, voice) {
   });
 }
 
+/** 일본어로 못 읽는 이유를 짚어 준다. "안 나온다" 만으로는 어디를 손볼지 모른다. */
+async function noJapaneseReason() {
+  const v = await loadVoices();
+  if (!v.length) return "브라우저가 음성을 하나도 못 봤다 — 브라우저를 완전히 껐다 켤 것";
+  const langs = [...new Set(v.map((x) => x.lang.split(/[-_]/)[0]))].sort().join(" ");
+  return `일본어 음성이 없어 번역문을 읽는다 (있는 언어: ${langs} · 브라우저 재시작 필요할 수 있음)`;
+}
+
 async function speakOne(box) {
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const { text, lang, voice, fellBack } = await resolveSpeech(box);
   if (!text) return;
-  if (fellBack) status("일본어 음성이 없어 번역문을 읽는다");
+  if (fellBack) status(await noJapaneseReason());
   else if (!voice) {
     const n = (await loadVoices()).length;
     status(`${lang} 음성이 없다 (설치된 음성 ${n}개). 시스템 설정에서 추가할 것`, true);
@@ -858,7 +871,7 @@ async function speakAll() {
   const first = await resolveSpeech(boxes[0]);
   status(
     first.fellBack
-      ? `일본어 음성이 없어 번역문을 읽는다 (${first.voice?.name ?? "기본"})`
+      ? await noJapaneseReason()
       : first.voice
         ? `음성: ${first.voice.name}`
         : "맞는 음성이 없어 기본 음성으로 읽는다"
