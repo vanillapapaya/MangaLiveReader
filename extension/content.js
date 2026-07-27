@@ -727,6 +727,17 @@ function toCss([x, y, w, h]) {
   };
 }
 
+/** 지금 화면에 보이는 박스인가.
+ *
+ * **`opacity` 로 판정하지 않는다.** 걸러진 효과음을 보이게 할 때 opacity 를 쓰면
+ * 쌓임 맥락이 생겨 라벨이 다른 박스 위로 못 올라간다. 그래서 CSS 를 색으로 바꿨는데,
+ * opacity 로 판정하던 코드가 조용히 어긋났다. 클래스로 직접 본다.
+ */
+function isShown(b) {
+  const hidden = b.classList.contains("mlr-kind-sfx") || b.classList.contains("mlr-kind-extra");
+  return !hidden || overlay().classList.contains("mlr-show-extra");
+}
+
 function inClip(p, c) {
   const mx = p.left + p.width / 2;
   const my = p.top + p.height / 2;
@@ -1047,7 +1058,7 @@ async function speakAll() {
   const root = document.getElementById(OVERLAY_ID);
   if (!root) return;
   const boxes = [...root.querySelectorAll(".mlr-box")].filter(
-    (b) => getComputedStyle(b).opacity !== "0" && hasSpeech(b)
+    (b) => isShown(b) && hasSpeech(b)
   );
   if (!boxes.length) {
     status("읽을 것이 없다", true);
@@ -1476,7 +1487,7 @@ function doLayoutLabels() {
   if (!root) return;
 
   const labels = [...root.querySelectorAll(".mlr-box")]
-    .filter((b) => getComputedStyle(b).opacity !== "0") // 걸러진 박스는 뺀다
+    .filter(isShown) // 걸러진 박스는 뺀다
     .map((b) => b.querySelector(".mlr-label"))
     .filter(Boolean);
 

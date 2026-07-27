@@ -146,7 +146,6 @@ function saveState(tabId, st) {
         on: true,
         lastHash: st.lastHash,
         lastAt: st.lastAt,
-        needsBaseline: Boolean(st.needsBaseline),
       },
     })
     .catch(() => {});
@@ -155,6 +154,11 @@ function saveState(tabId, st) {
 //: 신호가 온 뒤 이만큼 조용해야 확인한다. 페이지 넘김 애니메이션·타일 로딩이
 //: 끝나기를 기다리는 시간이다 (DESIGN.md §5.2 의 stable_frames 에 해당).
 const SETTLE_MS = 700;
+
+//: 신호가 이어져도 이만큼 지나면 더 미루지 않고 확인한다. 뷰어에 광고·애니메이션이
+//: 있으면 DOM 변화가 끊이지 않아 `SETTLE_MS` 디바운스가 영영 안 끝난다 —
+//: 페이지를 넘겨도 자동 번역이 안 걸린다.
+const SETTLE_MAX_MS = 2200;
 
 //: 자동으로는 이 간격보다 자주 읽지 않는다. 판정이 틀려도 API 를 쏟아붓지 않게
 //: 막는 마지막 방어선이다. 사람이 페이지를 이보다 빨리 넘기지도 않는다.
@@ -189,15 +193,34 @@ async function setAuto(tab, on) {
 async function schedule(tab) {
   const st = await loadState(tab.id);
   if (!st) return;
+  const now = Date.now();
+  if (!st.firstSignalAt) st.firstSignalAt = now;
   clearTimeout(st.timer);
-  st.timer = setTimeout(() => check(tab), SETTLE_MS);
+  // 신호가 끊임없이 오면 `clearTimeout` 때문에 확인이 영영 밀린다. 첫 신호로부터
+  // `SETTLE_MAX_MS` 가 지나면 더 미루지 않는다.
+  if (now - st.firstSignalAt >= SETTLE_MAX_MS) {
+    st.firstSignalAt = 0;
+    check(tab);
+    return;
+  }
+  st.timer = setTimeout(() => {
+    st.firstSignalAt = 0;
+    check(tab);
+  }, SETTLE_MS);
 }
 
 /** 캡처해서 해시가 달라졌을 때만 읽는다. */
 async function check(tab) {
   const st = await loadState(tab.id);
   if (!st || st.busy) return;
-  if (Date.now() - st.lastAt < AUTO_MIN_INTERVAL_MS) return;
+  // **간격 제한에 걸렸다고 그냥 버리면 안 된다.** 페이지를 빨리 넘기면 그 넘김이
+  // 통째로 사라져 자동 번역이 안 걸린다. 남은 시간만큼 미뤘다가 다시 본다.
+  const wait = AUTO_MIN_INTERVAL_MS - (Date.now() - st.lastAt);
+  if (wait > 0) {
+    clearTimeout(st.timer);
+    st.timer = setTimeout(() => check(tab), wait + 50);
+    return;
+  }
   st.busy = true;
   try {
     // 자동 확인은 **지난 읽기와 같은 영역**을 잘라야 한다. 매번 뷰어를 다시 찾으면
@@ -208,14 +231,6 @@ async function check(tab) {
     // 확인이 몰려 캡처가 잦아진다.
     st.lastAt = Date.now();
 
-    // 읽은 직후에는 오버레이가 새 박스로 바뀌어 있다. 그건 페이지가 바뀐 것이
-    // 아니므로, 다음 비교를 위한 **기준만 새로 잡고** 끝낸다.
-    if (st.needsBaseline) {
-      st.needsBaseline = false;
-      st.lastHash = prepared.ahash;
-      saveState(tab.id, st);
-      return;
-    }
     if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) return; // 같은 화면
 
     st.lastHash = prepared.ahash;
@@ -239,6 +254,27 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(PREV_KEY(tabId)).catch(() => {});
   chrome.storage.session.remove(KEY(tabId)).catch(() => {});
 });
+
+/** 읽기가 끝난 뒤 자동 감지의 기준 해시를 새로 찍는다.
+ *
+ * 오버레이(박스·라벨)가 바뀌었으므로 읽기 전 해시로는 다음 비교를 할 수 없다.
+ * 박스가 다 그려질 틈을 조금 준 뒤 한 번 찍는다. 오버레이를 숨기지 않으므로
+ * 화면은 깜빡이지 않는다.
+ */
+function refreshBaseline(tab) {
+  setTimeout(async () => {
+    const st = watching.get(tab.id);
+    if (!st || st.busy) return;
+    try {
+      const { ahash } = await prepare(tab, null, true, true);
+      st.lastHash = ahash;
+      st.lastAt = Date.now();
+      saveState(tab.id, st);
+    } catch {
+      // 못 찍었으면 다음 확인에서 "바뀌었다" 로 보고 한 번 더 읽을 뿐이다.
+    }
+  }, 400);
+}
 
 function tell(tab, m, err) {
   return chrome.tabs
@@ -407,13 +443,12 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     // **전체 읽기일 때만.** 영역 하나만 읽은 해시를 기준으로 삼으면, 다음 확인에서
     // 전체 화면 해시와 당연히 달라 자동 감지가 곧바로 전체를 다시 읽고 방금 고친
     // 박스를 지워 버린다.
-    const st = override ? null : watching.get(tab.id);
-    if (st) {
-      // 오버레이가 새 박스로 바뀌므로 지금 해시는 다음 비교의 기준이 될 수 없다.
-      // 다음 확인 때 기준만 새로 잡게 표시해 둔다.
-      st.needsBaseline = true;
-      saveState(tab.id, st);
-    }
+    // 읽고 나면 오버레이가 새 박스로 바뀐다. 지금 캡처의 해시로는 다음 비교를 할 수
+    // 없으므로 **읽기가 끝난 뒤 기준을 새로 찍는다** (아래 `refreshBaseline`).
+    //
+    // 예전에는 "다음 확인 때 기준만 잡고 넘어가기" 로 처리했는데, 그 한 번의 확인
+    // 동안 페이지를 넘기면 **그 넘김이 통째로 사라졌다** — "페이지 넘어갈 때 자동
+    // 번역이 안 되는 일이 허다하다" 의 원인이다.
 
     // 좌표 환산에 필요한 값을 먼저 보낸다. 서비스 bbox 는 전송 이미지 좌표계다.
     say("begin", {
@@ -435,6 +470,7 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     for await (const [event, data] of readSSE(resp)) {
       say(event, { data });
     }
+    if (!override) refreshBaseline(tab);
   } catch (err) {
     say("error", { data: { message: String(err?.message || err) } });
   }

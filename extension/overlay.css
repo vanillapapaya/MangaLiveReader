@@ -74,6 +74,14 @@
   max-width: min(32vw, 340px);
   opacity: 0;
   transition: opacity 0.08s;
+  /* **라벨은 모든 박스 위에 그린다.**
+     박스는 형제끼리 DOM 순서대로 쌓이므로, 그냥 두면 뒤에 오는 박스의 테두리·배경이
+     앞 박스의 라벨을 덮는다 — 번역문이 다른 박스 선 아래로 들어가 잘려 보인다.
+
+     `.mlr-box` 는 `position:absolute` 지만 `z-index:auto` 라 **쌓임 맥락을 만들지
+     않는다.** 그래서 자식인 라벨에 z-index 를 주면 형제 박스들 위로 올라간다.
+     (`:hover`·`.mlr-resizing` 처럼 z-index 가 붙은 박스만 자기 맥락을 만든다.) */
+  z-index: 5;
 }
 
 /* 마우스가 박스 위에 있을 때만 보인다. 오버레이 자체는 pointer-events:none 이므로
@@ -88,9 +96,9 @@
 }
 
 /* 마우스를 올린 라벨은 **항상 맨 위로.** 겹침 배치를 해도 완전히는 못 없애므로,
-   지금 읽으려는 것만은 무조건 보여야 한다. */
+   지금 읽으려는 것만은 무조건 보여야 한다. 라벨(z-index 5)보다도 위여야 한다. */
 .mlr-box:hover {
-  z-index: 2;
+  z-index: 6;
 }
 
 .mlr-box:hover .mlr-label {
@@ -134,8 +142,18 @@
 
 #mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-sfx,
 #mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-extra {
-  opacity: 0.55;
+  /* `opacity` 로 흐리게 하면 쌓임 맥락이 생겨 그 안의 라벨이 다른 박스 위로 못
+     올라간다. 테두리·배경 색을 직접 옅게 해서 같은 인상을 낸다. */
+  opacity: 1;
+  border-color: rgba(255, 176, 32, 0.5);
+  background: rgba(255, 176, 32, 0.05);
   pointer-events: auto;
+}
+
+#mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-sfx .mlr-label,
+#mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-extra .mlr-label {
+  background: rgba(70, 50, 20, 0.9);
+  color: #cfc7ba;
 }
 
 /* ---------------------------------------------------------------------------
