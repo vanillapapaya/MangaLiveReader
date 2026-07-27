@@ -177,12 +177,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       break;
     case "ocr":
       // 지금 뷰어가 어디 있는지 박아 둔다. 이후 스크롤·확대는 이 기준으로 따라간다.
+      // 예전에는 여기서 변환 기준을 박아 뒀다. 이제 박스마다 비율을 들고 있으므로
+      // 남은 변환만 지운다 (옛 세션이 남겨 놓았을 수 있다).
       {
-        const live = viewerEls.filter((el) => el.isConnected);
-        if (live.length) {
-          const u = unionRects(live.map((el) => el.getBoundingClientRect()));
-          ctx.anchor = { left: u.left, top: u.top, width: u.right - u.left };
-        }
         const b = overlay().querySelector("#mlr-boxes");
         if (b) b.style.transform = "";
       }
@@ -672,6 +669,7 @@ function drawBoxes(regions) {
   const boxes = overlay().querySelector("#mlr-boxes");
   // 전체 읽기는 `begin` 에서 이미 비웠다. 여기서 또 비우면 영역 하나만 다시
   // 읽을 때 나머지 박스가 통째로 사라진다.
+  const vrect = viewerRect();
   let drawn = 0;
   for (const r of regions) {
     const p = toCss(r.bbox);
@@ -687,6 +685,15 @@ function drawBoxes(regions) {
       width: `${p.width}px`,
       height: `${p.height}px`,
     });
+    // **뷰어 기준 비율을 박아 둔다.** 스크롤·확대·전체화면에서 이 값으로 다시 놓는다.
+    if (vrect) {
+      div.dataset.n = JSON.stringify({
+        nx: (p.left - vrect.x) / vrect.width,
+        ny: (p.top - vrect.y) / vrect.height,
+        nw: p.width / vrect.width,
+        nh: p.height / vrect.height,
+      });
+    }
     // 원문을 남겨 둔다. 번역이 도착하면 라벨을 덮어쓰므로, 보관하지 않으면
     // "원문 보기" 를 할 수가 없다.
     div.dataset.ja = r.text ?? "";
@@ -752,8 +759,9 @@ function openMenu(box, x, y) {
     closeMenu();
     if (act === "remove") {
       // 되돌아왔을 때 다시 지우려면 어디였는지 남겨야 한다.
-      if (ctx) {
-        const n = toNorm(box);
+      const v = viewerRect();
+      if (v) {
+        const n = toNorm(box, v);
         removedMarks.push({ cx: n.nx + n.nw / 2, cy: n.ny + n.nh / 2 });
       }
       box.remove();
@@ -1097,6 +1105,10 @@ function startResize(box) {
     const changed =
       box.style.left !== orig.left || box.style.top !== orig.top ||
       box.style.width !== orig.width || box.style.height !== orig.height;
+    // 손으로 옮겼으면 비율도 다시 잡아야 한다. 안 그러면 다음 스크롤에서
+    // 옛 비율로 되돌아간다.
+    const vr = viewerRect();
+    if (changed && vr) box.dataset.n = JSON.stringify(toNorm(box, vr));
     cancelResize();
     if (changed) reread(box);
   };
@@ -1168,10 +1180,28 @@ const EDITS_KEY = (k) => `mlr-edits-${k}`;
 //: 저장해 둘 페이지 수. storage.local 은 기본 5MB 라 무한정 쌓으면 언젠가 막힌다.
 const EDITS_KEEP = 200;
 
+/** 지금 화면에서 뷰어 요소들이 차지하는 사각형.
+ *
+ * **`ctx.rect` 를 쓰면 안 된다.** 그 값은 "이번에 잘라 보낸 범위" 라, 부분 읽기
+ * (영역 지정·다시 읽기) 때는 뷰어가 아니라 **작은 크롭 사각형**이다. 저장은 부분
+ * 읽기 끝에 하고 복원은 전체 읽기 끝에 하므로, 그대로 쓰면 **기준이 서로 달라져**
+ * 좌표가 통째로 어긋난다 — 손으로 더한 박스가 되살아나도 엉뚱한 곳에 놓이거나
+ * 화면 밖으로 나가 사라진 것처럼 보인다.
+ *
+ * 뷰어 요소는 두 경우 모두 같으므로 여기서 직접 잰다.
+ */
+function viewerRect() {
+  const live = viewerEls.filter((el) => el.isConnected);
+  if (!live.length) return null;
+  const u = unionRects(live.map((el) => el.getBoundingClientRect()));
+  const w = u.right - u.left;
+  const h = u.bottom - u.top;
+  return w > 0 && h > 0 ? { x: u.left, y: u.top, width: w, height: h } : null;
+}
+
 /** 화면 좌표 → 뷰어 사각형 기준 비율. */
-function toNorm(box) {
+function toNorm(box, v) {
   const r = box.getBoundingClientRect();
-  const v = ctx.rect;
   return {
     nx: (r.left - v.x) / v.width,
     ny: (r.top - v.y) / v.height,
@@ -1180,8 +1210,7 @@ function toNorm(box) {
   };
 }
 
-function fromNorm(a) {
-  const v = ctx.rect;
+function fromNorm(a, v) {
   return {
     left: v.x + a.nx * v.width,
     top: v.y + a.ny * v.height,
@@ -1191,11 +1220,12 @@ function fromNorm(a) {
 }
 
 async function saveEdits() {
-  if (!pageKey || !ctx) return;
+  const v = viewerRect();
+  if (!pageKey || !v) return;
   const root = document.getElementById(OVERLAY_ID);
   if (!root) return;
   const added = [...root.querySelectorAll('.mlr-box[data-manual="1"]')].map((b) => ({
-    ...toNorm(b),
+    ...toNorm(b, v),
     ja: b.dataset.ja || "",
     ko: b.dataset.ko || "",
     kind: b.dataset.kind || "dialogue",
@@ -1211,7 +1241,8 @@ async function saveEdits() {
 }
 
 async function restoreEdits() {
-  if (!pageKey || !ctx) return;
+  const v = viewerRect();
+  if (!pageKey || !v) return;
   removedMarks = [];
   let saved;
   try {
@@ -1227,7 +1258,7 @@ async function restoreEdits() {
   removedMarks = saved.removed || [];
   for (const m of removedMarks) {
     for (const b of root.querySelectorAll(".mlr-box")) {
-      const n = toNorm(b);
+      const n = toNorm(b, v);
       if (Math.abs(n.nx + n.nw / 2 - m.cx) < 0.02 && Math.abs(n.ny + n.nh / 2 - m.cy) < 0.02) {
         b.remove();
         break;
@@ -1239,7 +1270,7 @@ async function restoreEdits() {
   const boxes = root.querySelector("#mlr-boxes");
   let i = 0;
   for (const a of saved.added || []) {
-    const p = fromNorm(a);
+    const p = fromNorm(a, v);
     const div = document.createElement("div");
     div.className = "mlr-box mlr-translated";
     div.id = `mlr-box-keep${++i}`;
@@ -1247,6 +1278,7 @@ async function restoreEdits() {
     div.dataset.ja = a.ja;
     div.dataset.ko = a.ko;
     div.dataset.kind = a.kind;
+    div.dataset.n = JSON.stringify({ nx: a.nx, ny: a.ny, nw: a.nw, nh: a.nh });
     if (a.kind === "sfx" || a.kind === "extra") div.classList.add(`mlr-kind-${a.kind}`);
     Object.assign(div.style, {
       left: `${p.left}px`, top: `${p.top}px`,
@@ -1291,38 +1323,54 @@ function followViewer() {
   followPending = true;
   requestAnimationFrame(() => {
     followPending = false;
-    doFollowViewer();
+    relayoutBoxes();
   });
 }
 
-function doFollowViewer() {
-  const boxes = document.getElementById(OVERLAY_ID)?.querySelector("#mlr-boxes");
-  if (!boxes || !ctx?.rect) return;
+/** 박스를 지금 뷰어 사각형에 맞춰 다시 놓는다.
+ *
+ * **`transform` 하나로 처리하지 않는다.** 예전에는 `#mlr-boxes` 에 이동+배율 변환을
+ * 걸었는데, 전체화면처럼 배율이 크게 바뀌면 **라벨 글자까지 같이 확대·축소돼** 읽을
+ * 수 없게 된다. 뷰어가 다시 그려져 기준 요소가 사라지면 통째로 어긋나기도 한다.
+ *
+ * 박스마다 뷰어 기준 비율(`dataset.n`)을 들고 있다가 매번 절대 좌표를 다시 낸다.
+ * 스크롤·확대·전체화면·창 크기 변경이 전부 같은 경로로 처리되고, 라벨은 배율의
+ * 영향을 받지 않아 항상 같은 크기로 읽힌다.
+ */
+function relayoutBoxes() {
+  const root = document.getElementById(OVERLAY_ID);
+  const boxes = root?.querySelector("#mlr-boxes");
+  if (!boxes || !boxes.children.length) return;
 
-  const live = viewerEls.filter((el) => el.isConnected);
-  if (!live.length) return;
-  const now = unionRects(live.map((el) => el.getBoundingClientRect()));
-  const w = now.right - now.left;
-  if (w <= 0) return;
-
-  // 읽을 때 쓴 사각형은 뷰포트로 잘린 것(clampToViewport)이라, 지금 사각형과 바로
-  // 비교하면 안 된다. 요소 전체 사각형끼리 비교해야 한다.
-  if (!ctx.anchor) {
-    ctx.anchor = { left: now.left, top: now.top, width: w };
-    return;
+  // 뷰어가 다시 그려져 기억한 요소가 사라졌으면 새로 찾는다 (전체화면 전환 때
+  // SpeedBinb 는 타일을 새로 만든다).
+  if (!viewerEls.some((el) => el.isConnected)) {
+    try {
+      probeViewer();
+    } catch {
+      return;
+    }
   }
-  const s = w / ctx.anchor.width;
-  const tx = now.left - ctx.anchor.left * s;
-  const ty = now.top - ctx.anchor.top * s;
-  boxes.style.transformOrigin = "0 0";
-  boxes.style.transform =
-    Math.abs(s - 1) < 0.001 && Math.abs(tx) < 0.5 && Math.abs(ty) < 0.5
-      ? ""
-      : `translate(${tx}px, ${ty}px) scale(${s})`;
+  const v = viewerRect();
+  if (!v) return;
+
+  for (const el of boxes.children) {
+    if (!el.dataset.n) continue;
+    const p = fromNorm(JSON.parse(el.dataset.n), v);
+    el.style.left = `${p.left}px`;
+    el.style.top = `${p.top}px`;
+    el.style.width = `${p.width}px`;
+    el.style.height = `${p.height}px`;
+    el.classList.toggle("mlr-label-above", p.top + p.height + 28 > window.innerHeight);
+  }
+  layoutLabels();
 }
 
 addEventListener("scroll", followViewer, { passive: true, capture: true });
 addEventListener("resize", followViewer, { passive: true });
+// 전체화면 전환은 `resize` 가 늦게 오거나 안 올 수 있다. 직접 듣는다.
+addEventListener("fullscreenchange", followViewer);
+addEventListener("webkitfullscreenchange", followViewer);
 
 // ---------------------------------------------------------------------------
 // 라벨 겹침 풀기
