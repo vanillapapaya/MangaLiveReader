@@ -39,6 +39,21 @@
   <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
 </p>
 
+<h2 style="margin-top:32px;font-size:15px">번역 모델</h2>
+<select id="model" style="width:100%;padding:6px 8px;margin-top:4px;font:inherit">
+  <option value="">(서버 설정을 따른다)</option>
+  <option value="gemini-3.6-flash">Gemini 3.6 Flash — 무료 크레딧이 있을 때</option>
+  <option value="claude-sonnet-5">Claude Sonnet 5 — 품질·비용 균형</option>
+  <option value="claude-opus-5">Claude Opus 5 — 가장 좋지만 비싸다</option>
+  <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 싸다</option>
+</select>
+<p class="hint">
+  실측(200쪽 1권): Sonnet 5 <b>$1.64</b> · Gemini 3.6 Flash <b>$2.44</b>.
+  단가는 Gemini 가 절반인데 사고 토큰이 3.3배라 실제로는 더 든다 — 무료 크레딧이
+  있을 때만 이득이다. 자세한 것은 <code>DEVLOG.md</code>.
+  <br /><b>바꾸면 그 페이지를 다시 읽어야 반영된다</b> — 이미 번역된 것은 캐시에서 나온다.
+</p>
+
 <h2 style="margin-top:32px;font-size:15px">자동으로 켜질 사이트</h2>
 <p class="hint">
   여기 적은 사이트에서는 「자동」이 알아서 켜진다 — 페이지를 넘기면 다시 번역한다.

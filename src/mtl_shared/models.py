@@ -47,6 +47,10 @@ class ReadMeta:
     #: 보낸다(DEVLOG 참조). 예전에는 서버가 그 안을 **전부 번역하고** 클라이언트가
     #: 범위 밖을 버렸다 — 버릴 것에 돈을 냈다.
     clip: list[int] | None = None
+    #: 이 요청에 쓸 번역 모델. 없거나 모르는 값이면 `service.toml` 의 것을 쓴다.
+    #: 서버가 아는 목록(`app.ALLOWED_MODELS`)만 받는다 — 클라이언트 문자열을
+    #: 그대로 프로바이더에 넘기면 안 된다.
+    model: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ReadMeta:

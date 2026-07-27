@@ -5,6 +5,7 @@ const DEFAULTS = {
   ttsUrl: "",
   ttsVoice: "",
   autoSites: "",
+  model: "",
 };
 
 const url = document.getElementById("url");
@@ -14,6 +15,7 @@ const ttsurl = document.getElementById("ttsurl");
 const ttsvoice = document.getElementById("ttsvoice");
 const voicemsg = document.getElementById("voicemsg");
 const autosites = document.getElementById("autosites");
+const model = document.getElementById("model");
 
 chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   const v = { ...DEFAULTS, ...got };
@@ -21,6 +23,7 @@ chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   token.value = v.authToken;
   ttsurl.value = v.ttsUrl;
   autosites.value = v.autoSites;
+  model.value = v.model;
   if (v.ttsVoice) {
     // 목록을 아직 안 받았어도 저장된 값은 보여 준다.
     ttsvoice.add(new Option(v.ttsVoice, v.ttsVoice, true, true));
@@ -145,6 +148,7 @@ document.getElementById("save").addEventListener("click", async () => {
     ttsUrl: tts,
     ttsVoice: ttsvoice.value,
     autoSites: autosites.value,
+    model: model.value,
   });
   saved.hidden = false;
   if (granted) {

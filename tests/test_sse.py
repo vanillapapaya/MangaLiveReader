@@ -61,6 +61,15 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
     return out
 
 
+#: 캐시 키의 `mode` 에는 **모델이 함께 실린다** (`app.py` 의 `cache_mode`).
+#: 모델을 바꿔도 옛 모델의 번역이 나오면 안 되기 때문이다. 테스트도 같은 규칙으로
+#: 심어야 적중한다 — 여기가 어긋나면 "캐시가 왜 안 맞지" 로 시간을 버린다.
+def cache_mode(mode: str = "natural") -> str:
+    from mtl_service.app import cfg, resolve_model
+
+    return f"{mode}|{resolve_model(None)}"
+
+
 def post(client, phash: str, mode: str = "natural", prev: str | None = None):
     return client.post(
         "/read",
@@ -94,7 +103,7 @@ def _tiny_jpeg() -> bytes:
 def test_캐시_적중이면_GPU_없이_전부_흘린다(client) -> None:
     c, cache = client
     cache.put_ocr("a" * 16, "jumpplus", OCR_ROWS)
-    cache.put_translation("a" * 16, "natural", KO_ROWS)
+    cache.put_translation("a" * 16, cache_mode(), KO_ROWS)
 
     events = parse_sse(post(c, "a" * 16).text)
     names = [e for e, _ in events]
@@ -109,7 +118,7 @@ def test_원문이_번역보다_먼저_나간다(client) -> None:
     """§4.1 의 핵심. 번역이 9초 걸려도 원문 핀은 먼저 떠야 한다."""
     c, cache = client
     cache.put_ocr("b" * 16, "jumpplus", OCR_ROWS)
-    cache.put_translation("b" * 16, "natural", KO_ROWS)
+    cache.put_translation("b" * 16, cache_mode(), KO_ROWS)
 
     names = [e for e, _ in parse_sse(post(c, "b" * 16).text)]
     assert names.index("ocr") < names.index("translation")
@@ -120,7 +129,10 @@ def test_번역_실패해도_원문은_나가고_done_으로_끝난다(client, m
     c, cache = client
     cache.put_ocr("c" * 16, "jumpplus", OCR_ROWS)  # 번역은 없음
 
-    async def no_translator():
+    # `get_translator(model)` 로 바뀌었다 (설정에서 모델을 바꿀 수 있게 되면서).
+    # 인자를 안 받으면 TypeError 가 나고, 그건 번역 실패가 아니라 스트림 전체를
+    # 죽여 `done` 이 안 나간다 — 이 테스트가 바로 그것을 잡았다.
+    async def no_translator(model=None):
         return None
 
     monkeypatch.setattr(app_module, "get_translator", no_translator)
@@ -138,7 +150,7 @@ def test_모드가_다르면_번역을_다시_한다(client, monkeypatch) -> Non
     """`natural` 캐시가 있어도 `literal` 요청이면 번역 이벤트는 새로 만들어야 한다."""
     c, cache = client
     cache.put_ocr("d" * 16, "jumpplus", OCR_ROWS)
-    cache.put_translation("d" * 16, "natural", KO_ROWS)
+    cache.put_translation("d" * 16, cache_mode(), KO_ROWS)
 
     called: list[str] = []
 
@@ -182,7 +194,7 @@ def test_번역이_도착하는_대로_흘러간다(client, monkeypatch) -> None
     assert [e for e, _ in events][-1] == "done"
 
     # 부분 결과라도 캐시에 남아야 다음 열람이 빠르다
-    hit = cache.get("e" * 16, "jumpplus", "natural")
+    hit = cache.get("e" * 16, "jumpplus", cache_mode())
     assert hit is not None and hit.translation is not None
     assert len(hit.translation) == 3
 
@@ -200,7 +212,7 @@ def test_중간에_끊겨도_받은_만큼은_캐시한다(client, monkeypatch) 
     events = parse_sse(post(c, "f" * 16).text)
     names = [e for e, _ in events]
     assert names == ["cached", "ocr", "translation", "error", "done"]
-    hit = cache.get("f" * 16, "jumpplus", "natural")
+    hit = cache.get("f" * 16, "jumpplus", cache_mode())
     assert hit is not None and hit.translation == [
         {"id": 1, "ko": "첫번째", "note": None}
     ]

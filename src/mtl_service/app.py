@@ -43,10 +43,11 @@ _cache = PageCache(
     retention_days=cfg.cache.retention_days,
 )
 
-#: 번역기는 프로세스당 하나. SDK 클라이언트가 커넥션 풀을 들고 있어 매번 만들면
-#: 소켓이 샌다. `None` 이면 아직 안 만든 것 — 키가 없으면 계속 None 이고, 번역
-#: 없이 OCR 만 흘린다 (M1 동작으로 자연스럽게 강등된다).
-_translator: translate.Translator | None = None
+#: 번역기는 **모델당 하나**를 들고 있는다. SDK 클라이언트가 커넥션 풀을 쥐고 있어
+#: 매번 만들면 소켓이 샌다. 모델을 바꿔 가며 쓸 수 있어야 해서(설정에서 전환)
+#: 하나가 아니라 모델별로 캐시한다. 키가 없는 모델은 계속 만들어지지 않고,
+#: 번역 없이 OCR 만 흘린다 (M1 동작으로 자연스럽게 강등된다).
+_translators: dict[str, translate.Translator] = {}
 _translator_lock = asyncio.Lock()
 
 # ---------------------------------------------------------------------------
@@ -61,24 +62,32 @@ _translator_lock = asyncio.Lock()
 _inflight: dict[tuple[str, str, str], asyncio.Event] = {}
 
 
-async def get_translator() -> translate.Translator | None:
-    global _translator
-    if _translator is None:
-        async with _translator_lock:
-            if _translator is None:
-                try:
-                    kwargs = (
-                        {"effort": cfg.api.effort}
-                        if cfg.api.model_quality.startswith("claude-")
-                        else {}
-                    )
-                    _translator = translate.get_translator(
-                        cfg.api.model_quality, **kwargs
-                    )
-                except Exception as exc:  # 키 없음 등
-                    print(f"[warn] 번역기를 못 만들었다 — OCR 만 제공한다: {exc}")
-                    return None
-    return _translator
+#: 클라이언트가 아무 문자열이나 보내는 것을 그대로 쓰면 안 된다. 아는 것만 받는다.
+ALLOWED_MODELS = ("claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "gemini-3.6-flash")
+
+
+def resolve_model(requested: str | None) -> str:
+    """요청이 고른 모델. 모르는 값이면 설정값으로 떨어진다."""
+    if requested and requested in ALLOWED_MODELS:
+        return requested
+    return cfg.api.model_quality
+
+
+async def get_translator(model: str | None = None) -> translate.Translator | None:
+    name = resolve_model(model)
+    got = _translators.get(name)
+    if got is not None:
+        return got
+    async with _translator_lock:
+        if name in _translators:
+            return _translators[name]
+        try:
+            kwargs = {"effort": cfg.api.effort} if name.startswith("claude-") else {}
+            _translators[name] = translate.get_translator(name, **kwargs)
+        except Exception as exc:  # 키 없음 등
+            print(f"[warn] {name} 번역기를 못 만들었다 — OCR 만 제공한다: {exc}")
+            return None
+    return _translators[name]
 
 # ---------------------------------------------------------------------------
 # GPU 전용 상주 워커
@@ -260,7 +269,17 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
         if parsed.refresh and not parsed.no_cache:
             _cache.purge_near(parsed.phash, parsed.profile)
         skip_read = parsed.no_cache or parsed.refresh
-        hit = None if skip_read else _cache.get(parsed.phash, parsed.profile, parsed.mode)
+
+        # **캐시 키에 모델을 넣는다.** 안 넣으면 모델을 바꿔도 옛 모델의 번역이
+        # 그대로 나온다 — 바꾼 보람이 없고, 비교도 못 한다.
+        #
+        # `mode` 칸에 함께 실어 스키마를 안 바꾼다. 한 phash 행에는 번역이 하나만
+        # 들어가므로, 모델을 오가면 그때마다 다시 번역한다 (그게 맞다 — 다른 모델의
+        # 결과를 보여 달라고 한 것이니).
+        model_name = resolve_model(parsed.model)
+        cache_mode = f"{parsed.mode}|{model_name}"
+
+        hit = None if skip_read else _cache.get(parsed.phash, parsed.profile, cache_mode)
         yield sse("cached", {"hit": hit is not None, "fuzzy": bool(hit and hit.fuzzy)})
 
         if hit is not None:
@@ -308,7 +327,7 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
             for tr in hit.translation:
                 yield sse("translation", tr)
         elif to_translate:
-            key = (parsed.phash, parsed.profile, parsed.mode)
+            key = (parsed.phash, parsed.profile, cache_mode)
 
             # 같은 페이지가 이미 번역 중이면 기다렸다가 그 결과를 쓴다.
             waiting = _inflight.get(key)
@@ -317,7 +336,7 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
                     await asyncio.wait_for(waiting.wait(), timeout=90)
                 except (TimeoutError, asyncio.TimeoutError):
                     pass
-                again = _cache.get(parsed.phash, parsed.profile, parsed.mode)
+                again = _cache.get(parsed.phash, parsed.profile, cache_mode)
                 if again is not None and again.translation is not None:
                     for tr in again.translation:
                         yield sse("translation", tr)
@@ -348,7 +367,7 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
                 # 번역은 **매번 새로** — 실측에서 같은 이미지를 3초에 네 번 번역한
                 # 원인이다. 받은 데까지라도 저장한다.
                 if collected and not parsed.no_cache:
-                    _cache.put_translation(parsed.phash, parsed.mode, collected)
+                    _cache.put_translation(parsed.phash, cache_mode, collected)
                 _inflight.pop(key, None)
                 done_evt.set()
             translate_ms = int((time.perf_counter() - t0) * 1000)
@@ -388,7 +407,7 @@ async def _translate_stream(regions: list[dict[str, object]], parsed: ReadMeta):
     전체가 멈춘다. 별도 스레드에서 돌리고 큐로 건네받는다 — 스레드가 `put` 할 때는
     `call_soon_threadsafe` 를 써야 한다 (asyncio.Queue 는 스레드 안전하지 않다).
     """
-    translator = await get_translator()
+    translator = await get_translator(parsed.model)
     if translator is None:
         yield "error", "번역기가 없다 (API 키 미설정)"
         return

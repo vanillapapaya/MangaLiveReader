@@ -23,6 +23,8 @@ const DEFAULTS = {
   // 음성 합성 서버 (GPT-SoVITS). 비우면 브라우저 내장 음성을 쓴다.
   ttsUrl: "",
   ttsVoice: "",
+  //: 번역 모델. 빈 값이면 서버의 `service.toml` 을 따른다.
+  model: "",
   //: 이 호스트들에서는 「자동」이 알아서 켜진다. 한 줄에 하나.
   //: 뒤에서부터 맞춘다 — `yanmaga.jp` 는 `www.yanmaga.jp` 에도 걸린다.
   autoSites: [
@@ -582,6 +584,8 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     //    직전 페이지를 문맥으로 넘긴다. 방금 읽은 그 페이지를 자기 문맥으로 주면
     //    같은 원문을 두 번 넣는 꼴이므로 부분 읽기에서는 보내지 않는다.
     const prevPage = override ? null : await getPrevPage(tab.id);
+    // 한 번만 읽는다 — 아래 fetch 에서도 같은 값을 쓴다.
+    const { serviceUrl, authToken, model } = await settings();
     const meta = {
       phash,
       profile: hostToProfile(tab.url),
@@ -593,6 +597,8 @@ async function run(tab, override = null, prepared = null, opts = {}) {
       // 말풍선이 "그림 위" 로 오판돼 5개가 통째로 사라졌다(17개 → 22개).
       // 효과음이 섞여 들어오는 것보다 대사가 빠지는 쪽이 훨씬 나쁘다.
       include_sfx: true,
+      // 서버가 아는 목록만 받아 준다 (`app.ALLOWED_MODELS`). 빈 값이면 서버 설정.
+      model: model || null,
       // 손으로 고른 읽기(영역 지정·다시 읽기)는 캐시를 건너뛴다. 사용자가 굳이
       // 다시 시킨 것은 **지난 결과가 마음에 안 들어서**다. 캐시를 주면 예전에
       // 잘못 읽은 것을 그대로 돌려준다.
@@ -616,7 +622,6 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     form.append("image", blob, "page.jpg");
     form.append("meta", JSON.stringify(meta));
 
-    const { serviceUrl, authToken } = await settings();
     let resp;
     try {
       resp = await postWithRetry(serviceUrl, form, authToken, say);
