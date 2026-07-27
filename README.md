@@ -15,21 +15,33 @@
 
 ### 1. 서비스
 
-**어디서 띄우느냐에 따라 설정 두 개가 같이 움직인다.** 별도의 "모드" 같은 건 없고
-그냥 서로 맞아야 하는 값들이다. 어긋나면 서비스는 멀쩡히 뜨는데 확장만 못 붙는다.
+**어디서든 같은 스크립트 하나로 띄운다.**
 
-| | WSL | 윈도우 |
-|---|---|---|
-| 실행 | `./run-service.sh` | `run-service.cmd` |
-| `service.toml` `dev_bind_loopback` | `true` | `false` |
-| 확장 옵션 화면 주소 | `http://127.0.0.1:8788/read` | `http://<서비스-머신-tailscale-주소>:8788/read` |
-| 맥북에서 붙나 | ✗ | ✓ |
+```bash
+./run-service.sh     # WSL 셸
+```
+```
+cd C:\code\MangaLiveReader && run-service.cmd         # 윈도우 cmd
+```
 
-**WSL 로는 맥북에서 못 붙는다.** WSL 은 NAT 뒤(172.30.x)라 윈도우의 Tailscale
+`run-service.sh` 는 `service.toml` 을 보고 **어느 파이썬으로 띄울지 스스로 고른다:**
+
+| `dev_bind_loopback` | 바인딩 | 실제로 실행되는 것 | 맥북에서 |
+|---|---|---|---|
+| `true` | `127.0.0.1` | 리눅스 venv (WSL 안) | ✗ |
+| `false` | Tailscale 주소 | **윈도우 venv** (WSL 셸에서 대신 띄운다) | ✓ |
+
+**WSL 은 Tailscale 주소에 바인딩할 수 없다** — NAT 뒤(172.30.x)라 윈도우의 Tailscale
 인터페이스가 안 보이고, `bind_tailscale_only` 가 주소를 못 찾아 기동을 거부한다.
+그래서 그 경우 스크립트가 윈도우 파이썬을 대신 띄운다. WSL 셸에서 그대로 돌고 로그도
+여기로 나오며 Ctrl+C 도 먹는다.
+
+**맞춰 줘야 할 것은 확장 옵션 화면의 주소 하나뿐이다** — 루프백이면
+`http://127.0.0.1:8788/read`, Tailscale 이면 그 주소. 어긋나면 서비스는 멀쩡히 뜨는데
+확장만 못 붙는다.
 
 **`py -X utf8 -m mtl_service` 를 쓰지 마라.** `py` 는 시스템 파이썬이라 이 프로젝트의
-의존성이 없다. `run-service.cmd` 가 venv 를 쓴다.
+의존성이 없다.
 
 기동하면 이렇게 뜬다:
 
