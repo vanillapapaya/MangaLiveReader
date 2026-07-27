@@ -2,6 +2,13 @@
    좌표가 맞는지 눈으로 확인하는 것이 목적이라 박스와 라벨만 그린다. */
 
 #mlr-overlay {
+  /* 라벨 글씨 크기. 옵션 화면에서 정한 값을 콘텐츠 스크립트가 여기 꽂는다.
+     기기마다 체감이 달라서(Retina 맥북 ↔ 일반 모니터) 고정하면 누군가는 불편하다.
+
+     전체 펼침(`mlr-show-all`)은 한 뼘 작게 간다 — 라벨이 한꺼번에 다 보이므로
+     같은 크기면 화면이 글자로 덮인다. */
+  --mlr-label-size: 12px;
+
   position: fixed;
   inset: 0;
   z-index: 2147483647;
@@ -62,7 +69,7 @@
   padding: 2px 5px;
   background: rgba(20, 20, 24, 0.9);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--mlr-label-size, 12px);
   line-height: 1.35;
   border-radius: 3px;
   /* **한 줄로 강제하지 않는다.** 예전에는 `white-space: nowrap` + `overflow: hidden`
@@ -109,7 +116,7 @@
 /* 전부 펼친 상태에서는 라벨이 서로 가리지 않게 조금 줄인다 —
    겹침 배치(layoutLabels)와 같이 쓴다. */
 #mlr-overlay.mlr-show-all .mlr-label {
-  font-size: 11px;
+  font-size: calc(var(--mlr-label-size, 12px) - 1px);
   max-width: min(22vw, 240px);
 }
 

@@ -6,6 +6,7 @@ const DEFAULTS = {
   ttsVoice: "",
   autoSites: "",
   model: "",
+  labelSize: 12,
 };
 
 const url = document.getElementById("url");
@@ -16,6 +17,22 @@ const ttsvoice = document.getElementById("ttsvoice");
 const voicemsg = document.getElementById("voicemsg");
 const autosites = document.getElementById("autosites");
 const model = document.getElementById("model");
+const labelsize = document.getElementById("labelsize");
+const labelsizeOut = document.getElementById("labelsize-out");
+const labelsizeSample = document.getElementById("labelsize-sample");
+
+/** 미리보기를 지금 값에 맞춘다. 숫자만 보고는 어느 크기가 맞는지 알기 어렵다. */
+function showLabelSize() {
+  labelsizeOut.textContent = `${labelsize.value}px`;
+  labelsizeSample.style.fontSize = `${labelsize.value}px`;
+}
+
+labelsize.addEventListener("input", () => {
+  showLabelSize();
+  // **끌면 바로 저장한다.** 「저장」을 눌러야 반영되면 크기를 고르는 데 왕복이
+  // 생긴다. 이건 권한이 필요 없는 값이라 바로 넣어도 안전하다.
+  chrome.storage.sync.set({ labelSize: Number(labelsize.value) }).catch(() => {});
+});
 
 chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   const v = { ...DEFAULTS, ...got };
@@ -24,6 +41,8 @@ chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   ttsurl.value = v.ttsUrl;
   autosites.value = v.autoSites;
   model.value = v.model;
+  labelsize.value = v.labelSize;
+  showLabelSize();
   if (v.ttsVoice) {
     // 목록을 아직 안 받았어도 저장된 값은 보여 준다.
     ttsvoice.add(new Option(v.ttsVoice, v.ttsVoice, true, true));
@@ -149,6 +168,7 @@ document.getElementById("save").addEventListener("click", async () => {
     ttsVoice: ttsvoice.value,
     autoSites: autosites.value,
     model: model.value,
+    labelSize: Number(labelsize.value),
   });
   saved.hidden = false;
   if (granted) {

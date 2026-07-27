@@ -39,6 +39,21 @@
   <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
 </p>
 
+<h2 style="margin-top:32px;font-size:15px">번역 글씨 크기</h2>
+<p class="hint">
+  말풍선 위에 뜨는 번역문의 크기. 기기마다 체감이 달라서 고정하면 누군가는 불편하다.
+  <br /><b>바꾸면 열려 있는 페이지에도 바로 반영된다</b> — 새로고침하지 않아도 된다.
+</p>
+<div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+  <input id="labelsize" type="range" min="9" max="20" step="1" value="12" style="flex:1" />
+  <output id="labelsize-out" style="min-width:3.5em;font:13px ui-monospace,Consolas,monospace">12px</output>
+</div>
+<p class="hint">
+  <span id="labelsize-sample"
+    style="display:inline-block;margin-top:6px;padding:2px 5px;background:rgba(20,20,24,.9);
+           color:#fff;border-radius:3px;line-height:1.35">이게 대체 뭐야…</span>
+</p>
+
 <h2 style="margin-top:32px;font-size:15px">번역 모델</h2>
 <select id="model" style="width:100%;padding:6px 8px;margin-top:4px;font:inherit">
   <option value="">(서버 설정을 따른다)</option>

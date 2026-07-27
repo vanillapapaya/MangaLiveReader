@@ -599,6 +599,7 @@ function overlay() {
       '<div id="mlr-status"></div><div id="mlr-boxes"></div>' + PANEL_HTML;
     (fsElement() ?? document.documentElement).appendChild(el);
     bindPanel(el);
+    applyLabelSize();
   } else {
     // 이미 있으면 지금 전체화면 상태에 맞는 자리인지 확인한다.
     reparentOverlay();
@@ -613,6 +614,37 @@ function overlay() {
  * 나가면 **오버레이가 도로 켜지고, 그 상태로 캡처돼 상태줄 글자가 번역된다.**
  * 켜는 것은 켜려는 곳에서만 명시적으로 한다.
  */
+//: 라벨 글씨 크기의 허용 범위. 밖의 값이 오면 기본으로 떨어진다 — 저장소가
+//: 오염돼도 화면이 못 쓰게 되면 안 된다.
+const LABEL_SIZE_MIN = 9;
+const LABEL_SIZE_MAX = 20;
+const LABEL_SIZE_DEFAULT = 12;
+
+/** 저장된 글씨 크기를 오버레이에 꽂는다. CSS 변수 하나면 기본·전체펼침이 같이 따라온다. */
+async function applyLabelSize() {
+  const el = document.getElementById(OVERLAY_ID);
+  if (!el) return;
+  let px = LABEL_SIZE_DEFAULT;
+  try {
+    const got = await chrome.storage.sync.get("labelSize");
+    const v = Number(got.labelSize);
+    if (Number.isFinite(v) && v >= LABEL_SIZE_MIN && v <= LABEL_SIZE_MAX) px = v;
+  } catch {
+    /* 못 읽으면 기본값 */
+  }
+  el.style.setProperty("--mlr-label-size", `${px}px`);
+}
+
+// 옵션 화면에서 바꾸면 **열려 있는 페이지에도 바로 반영한다.** 새로고침해야만
+// 보이면 어느 크기가 맞는지 고르기가 번거롭다.
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && changes.labelSize) applyLabelSize();
+  });
+} catch {
+  /* 저장소가 막힌 환경 */
+}
+
 function showOverlay() {
   overlay().style.visibility = "visible";
 }
