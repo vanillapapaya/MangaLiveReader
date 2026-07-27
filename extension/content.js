@@ -433,7 +433,7 @@ function startSelection() {
   box.innerHTML =
     '<div class="mlr-sel-rect" hidden></div>' +
     '<div class="mlr-sel-hint">읽을 영역을 드래그하세요 · Esc 취소</div>';
-  document.documentElement.appendChild(box);
+  (fsElement() ?? document.documentElement).appendChild(box);
 
   const rectEl = box.querySelector(".mlr-sel-rect");
   let start = null;
@@ -586,8 +586,11 @@ function overlay() {
     el.id = OVERLAY_ID;
     el.innerHTML =
       '<div id="mlr-status"></div><div id="mlr-boxes"></div>' + PANEL_HTML;
-    document.documentElement.appendChild(el);
+    (fsElement() ?? document.documentElement).appendChild(el);
     bindPanel(el);
+  } else {
+    // 이미 있으면 지금 전체화면 상태에 맞는 자리인지 확인한다.
+    reparentOverlay();
   }
   return el;
 }
@@ -1576,8 +1579,39 @@ function relayoutBoxes() {
 addEventListener("scroll", followViewer, { passive: true, capture: true });
 addEventListener("resize", followViewer, { passive: true });
 // 전체화면 전환은 `resize` 가 늦게 오거나 안 올 수 있다. 직접 듣는다.
-addEventListener("fullscreenchange", followViewer);
-addEventListener("webkitfullscreenchange", followViewer);
+// ---------------------------------------------------------------------------
+// 전체화면에서는 오버레이를 그 안으로 옮긴다
+//
+// **전체화면일 때 브라우저는 `:fullscreen` 요소와 그 자손만 그린다.** 우리 오버레이는
+// `documentElement` 에 붙어 있어 그 바깥이라 **통째로 안 보인다** — `position: fixed`
+// 도 `z-index: 최대` 도 소용없다. 확장이 "안 되는" 것처럼 보이지만 실제로는 읽기도
+// 번역도 다 돌고 있고 화면에만 안 나온다 (comic-fuz 등).
+//
+// 전체화면이 풀리면 되돌린다. 안 그러면 사라진 요소 안에 갇힌다.
+// ---------------------------------------------------------------------------
+
+function fsElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function reparentOverlay() {
+  const el = document.getElementById(OVERLAY_ID);
+  if (!el) return;
+  const host = fsElement() ?? document.documentElement;
+  // `contains` 로 본다 — 전체화면 요소의 **자손**이면 그대로 둬도 그려진다.
+  if (host !== el.parentNode && !host.contains(el)) host.appendChild(el);
+  // 선택 덮개도 같이 옮긴다 (드래그 중에 전체화면을 켜는 경우).
+  const sel = document.getElementById(SELECT_ID);
+  if (sel && host !== sel.parentNode && !host.contains(sel)) host.appendChild(sel);
+}
+
+function onFullscreenChange() {
+  reparentOverlay();
+  followViewer();
+}
+
+addEventListener("fullscreenchange", onFullscreenChange);
+addEventListener("webkitfullscreenchange", onFullscreenChange);
 
 // ---------------------------------------------------------------------------
 // 라벨 겹침 풀기
