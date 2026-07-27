@@ -277,12 +277,60 @@ function probeViewer() {
     return overlap >= 0.6 * Math.min(c.r.height, seed.r.height);
   });
 
+  // **한 페이지가 가로 띠 여러 장으로 쪼개져 있으면 세로로도 이어 붙인다.**
+  //
+  // SpeedBinb(yanmaga 등)는 한 페이지를 띠로 잘라 세로로 쌓는다. 실측:
+  //
+  //   IMG 888x426 @0,42     ← 이 셋이 한 페이지다
+  //   IMG 888x426 @0,465
+  //   IMG 888x428 @0,888
+  //   IMG 888x426 @-936,42  ← 이전 페이지 (화면 밖)
+  //
+  // "같은 행" 규칙만 쓰면 셋 중 하나만 잡혀 **페이지의 3분의 1만 보낸다.**
+  // 스크롤할 때마다 씨앗이 다른 띠로 바뀌어 잘라 보내는 영역도 널뛴다 —
+  // 실측 로그에서 같은 페이지의 region 수가 4·5·6·7·8·11 로 흔들린 원인이다.
+  //
+  // **위아래로 쌓인 다른 페이지와는 구별해야 한다.** 한 페이지의 띠는
+  //   · 좌우 범위가 거의 같고 (같은 칼럼)
+  //   · 세로로 맞닿아 있다 (틈이 거의 없다)
+  // 별개 페이지는 틈이 벌어지거나 좌우가 어긋난다.
+  extendVertically(group, cands);
+
   // 스크롤·확대를 따라가려면 **사각형이 아니라 요소**를 들고 있어야 한다.
   viewerEls = group.map((c) => c.el);
   const rect = clampToViewport(unionRects(group.map((c) => c.r)), vw, vh);
   const tag =
-    seed.el.tagName.toLowerCase() + (group.length > 1 ? ` ×${group.length}(펼침면)` : "");
+    seed.el.tagName.toLowerCase() + (group.length > 1 ? ` ×${group.length}` : "");
   return { rect, tag, dpr: dpr(), count: group.length };
+}
+
+//: 띠끼리 이 정도까지 벌어져도 한 페이지로 본다. 실측에서는 3px 겹쳐 있었다.
+const STRIP_GAP_MAX = 24;
+//: 좌우 범위가 이 비율 넘게 어긋나면 다른 것으로 본다.
+const STRIP_ALIGN_TOL = 0.1;
+
+/** `group` 에 세로로 맞닿은 같은 폭의 조각들을 이어 붙인다 (제자리 수정). */
+function extendVertically(group, cands) {
+  const w0 = group[0].r.width;
+  const l0 = group[0].r.left;
+  const aligned = (r) =>
+    Math.abs(r.width - w0) <= w0 * STRIP_ALIGN_TOL &&
+    Math.abs(r.left - l0) <= w0 * STRIP_ALIGN_TOL;
+
+  let grew = true;
+  while (grew) {
+    grew = false;
+    const u = unionRects(group.map((c) => c.r));
+    for (const c of cands) {
+      if (group.includes(c) || !aligned(c.r)) continue;
+      // 위나 아래로 맞닿아 있나 (음수면 겹친 것 — 그것도 맞닿은 것이다)
+      const gap = Math.max(c.r.top - u.bottom, u.top - c.r.bottom);
+      if (gap <= STRIP_GAP_MAX) {
+        group.push(c);
+        grew = true;
+      }
+    }
+  }
 }
 
 function dpr() {
