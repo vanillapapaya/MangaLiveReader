@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Manga Live Reader (스파이크)",
+  "version": "0.0.1",
+  "description": "뷰어 페이지를 캡처해 mtl-service 로 보내고 결과를 겹쳐 보인다. 경로 검증용.",
+
+  "permissions": ["activeTab", "scripting", "storage"],
+
+  "host_permissions": [
+    "http://100.66.125.121:8788/*",
+    "http://127.0.0.1:8788/*",
+    "http://localhost:8788/*"
+  ],
+
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+
+  "background": { "service_worker": "background.js" },
+
+  "action": { "default_title": "이 페이지 읽기 (Alt+Shift+M)" },
+
+  "commands": {
+    "read-page": {
+      "suggested_key": { "default": "Alt+Shift+M" },
+      "description": "현재 페이지를 캡처해 번역한다"
+    },
+    "select-region": {
+      "suggested_key": { "default": "Alt+Shift+D" },
+      "description": "읽을 영역을 드래그로 고른다 (자동 탐지 실패용)"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

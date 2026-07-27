@@ -1,0 +1,112 @@
+# mtl-service 설정. DESIGN.md §12 참조.
+
+[server]
+# true면 기동 시 Tailscale 인터페이스 IP를 찾아 거기에만 바인딩한다.
+# 못 찾으면 기동을 거부한다 (0.0.0.0 폴백 금지).
+bind_tailscale_only = true
+# **맥북 모드.** Tailscale 주소(100.66.125.121)에만 바인딩한다.
+#
+# 이 값이 false 면 **서비스를 윈도우에서 띄워야 한다** — WSL 은 NAT 뒤(172.30.x)라
+# 윈도우의 Tailscale 인터페이스가 안 보이고, 기동을 거부한다. `run-service.cmd` 를 쓸 것.
+#
+# WSL 에서 띄우려면(`run-service.sh`) 이 값을 true 로 되돌린다. 그러면 맥북에서는
+# 못 붙고 윈도우 브라우저만 된다 (WSL2 의 localhost 전달).
+dev_bind_loopback = false
+port = 8788
+auth_token = "CHANGEME-공유-시크릿"
+# M1 개발 편의. M2 이후 false.
+auth_disabled = true
+
+[models]
+resident = true
+ttl_seconds = 0          # 0 = 무한 상주
+device = "cuda"          # cuda | cpu
+# comic-text-detector 가중치 경로. scripts/fetch_models.py 가 여기에 받는다.
+detector_weights = "models/comictextdetector.pt"
+detector_input_size = 1024
+
+[detect]
+# 이미지 면적 대비 이 비율 미만인 박스는 노이즈로 폐기 (DESIGN.md §8.1)
+min_area_ratio = 0.0005
+# 줄 단위로 쪼개진 박스를 병합할 때 허용 간격. 벌어진 방향의 박스 크기 배수다.
+merge_gap_ratio = 0.6
+# 그 허용 간격의 절대 상한 (페이지 짧은 변 대비). 1200px 페이지에서 30px.
+# 비례항만 두면 큰 박스가 멀리까지 손을 뻗어 남남인 말풍선을 붙인다 (detect.py 주석)
+merge_gap_max_ratio = 0.025
+# yolo confidence 하한
+detect_threshold = 0.35
+# NMS IoU 임계
+nms_threshold = 0.35
+# 글자 마스크 이진화 임계 (0-1)
+mask_threshold = 0.3
+
+# yolo 가 박스를 안 준 마스크 덩어리를 region 으로 승격 (detect.py `_promote`).
+# 효과음이 여기에 걸린다. 끄면 yolo 박스만 쓴다.
+mask_promote = true
+# 획을 덩어리로 잇는 팽창 반경 (페이지 짧은 변 대비). 1200px 에서 12px.
+mask_dilate_ratio = 0.010
+# 후보 bbox 안 실제 글자 픽셀 비율 하한. 그림 가장자리 노이즈 제거
+mask_min_ink_ratio = 0.05
+# 후보의 마스크 원본값 평균 하한 (0-1). 실측: 진짜 글자 193-221, 그림 오검출 85-142
+mask_promote_confidence = 0.7
+# yolo 박스와 이 비율 넘게 겹치면 중복으로 폐기
+mask_max_overlap = 0.3
+
+[ocr]
+batch_size = 16
+crop_padding = 4
+# 결과가 이 길이 이하면 오검출로 보고 제외 (DESIGN.md §8.3)
+min_text_length = 2
+# 생성 상한(글자). 상한에 부딪힌 말풍선 밖 결과는 버린다 (쓰레기 신호).
+# 말풍선 안은 여기 걸려도 버리지 않는다 (ocr.py 주석).
+#
+# **지연을 묶는 값이 아니었다.** 32 → 64 → 128 → 256 으로 올리며 8장을 재보니
+# ocr 평균 337 / 478 / 473 / 484ms 로 64 위로는 평평하다. 상한은 모델이 실제로
+# 그만큼 생성할 때만 비용이 되는데, 실측 최장이 60자라 64 부터는 아무도 안 닿는다.
+#
+# 32 일 때는 정상 대사가 잘리고 있었다 (길이 상위가 전부 32 = 상한에 걸린 것).
+# 대사가 빽빽한 작품을 위해 넉넉히 잡는다 — 공짜다.
+max_text_length = 256
+
+[order]
+# XY-cut 빈 띠 판정 문턱 (페이지 짧은 변 대비 비율, DESIGN.md §8.2).
+# 0.015 면 짧은 변 1200px 페이지에서 18px. 칸 사이 홈보다 좁고 글줄 간격보다 넓다.
+min_gap_ratio = 0.015
+
+[api]
+# A/B 실측 결과 (scripts/ab_translate.py, 6장):
+#   claude-sonnet-5    지연 8.7초  출력 444토큰  200쪽 1권 $1.64
+#   gemini-3.6-flash   지연 11.0초 출력 1477토큰 200쪽 1권 $2.44
+# Gemini 는 단가가 절반인데 사고 토큰이 3.3배라 실제로 더 비싸고 더 느리다.
+#
+# DESIGN.md §8.4 는 natural→Haiku / literal→Sonnet 2계층을 예고했지만
+# Haiku 4.5 는 (1) 캐시 최소 길이가 4096 토큰이라 번역 프롬프트가 조용히 캐시되지
+# 않고 (2) effort/adaptive thinking 을 400 으로 거부한다. 2계층을 정당화할 측정도
+# 아직 없어서 둘 다 Sonnet 5 로 둔다. 계층을 나누려면 먼저 재 볼 것.
+model_fast = "claude-sonnet-5"
+model_quality = "claude-sonnet-5"
+# Anthropic 모델의 effort. low/medium 이 지연 차이가 거의 없었고(둘 다 8-9초)
+# medium 에서 오히려 품질이 흔들린 적이 있어 low 로 둔다.
+effort = "low"
+
+[cache]
+path = "cache/pages.sqlite3"
+retention_days = 90
+# 확장이 보내는 phash 가 **256비트 지각 해시**(16×16 평균 해시)로 바뀌었다.
+# 예전 값 3 은 64비트 해시 기준이라 지금은 너무 빡빡하다 — 같은 페이지도 렌더링
+# 흔들림으로 몇 비트는 어긋난다.
+#
+# 처음엔 20 으로 잡았다. 근거는 픽스처 8장 측정이었다 — 같은 페이지 최대 6,
+# 서로 다른 페이지 최소 100.
+#
+# **실사용 캐시에서 다른 두 페이지가 거리 24 로 붙어 있었다.** 픽스처는 전부
+# 다른 작품이라 서로 멀었지만, 같은 작품의 연속된 두 장은 칸 배치가 닮는다.
+# 20 은 그 24 와 4밖에 안 떨어져 있다 — 조금만 더 닮은 장이 나오면 **다른 페이지의
+# 번역을 캐시에서 돌려준다.**
+#
+# 같은 페이지는 6 이하로 측정됐으므로 10 으로 내려도 캐시 적중은 그대로다.
+fuzzy_hamming = 10
+
+[metrics]
+# JSONL 구조화 로그 (DESIGN.md §9.4). 빈 문자열이면 파일 기록 안 함.
+jsonl_path = "logs/metrics.jsonl"

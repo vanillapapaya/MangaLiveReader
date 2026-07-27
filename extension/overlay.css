@@ -1,0 +1,332 @@
+/* 스파이크용 최소 오버레이. DESIGN.md §7.3 의 L1/L2/L3 은 아직 아니다 —
+   좌표가 맞는지 눈으로 확인하는 것이 목적이라 박스와 라벨만 그린다. */
+
+#mlr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  /* 클릭이 통과해야 뷰어를 계속 조작할 수 있다 (§7.1 의 입력통과에 해당) */
+  pointer-events: none;
+  font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+}
+
+#mlr-status {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  background: rgba(20, 20, 24, 0.88);
+  color: #e8e8ea;
+  font-size: 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+#mlr-status.mlr-error {
+  background: rgba(140, 24, 24, 0.92);
+}
+
+/* 패널의 「상태」 로 끈다. 좌표가 맞는지 확인할 때는 필요하지만 그냥 읽을 때는
+   왼쪽 위를 가린다. */
+#mlr-overlay.mlr-hide-status #mlr-status {
+  display: none;
+}
+
+.mlr-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid rgba(64, 200, 96, 0.9);
+  border-radius: 2px;
+}
+
+/* 말풍선 밖 텍스트(효과음·배경). §8.1 의 is_bubble=false */
+.mlr-box.mlr-sfx {
+  border-color: rgba(80, 120, 255, 0.9);
+  border-style: dashed;
+}
+
+/* 번역이 도착하면 채워진다. 스트리밍이 실제로 흘러오는지 눈으로 보인다. */
+.mlr-box.mlr-translated {
+  border-color: rgba(255, 176, 32, 0.95);
+  background: rgba(255, 176, 32, 0.1);
+}
+
+/* 라벨은 기본적으로 **접어 둔다.** 박스 아래에 펼쳐 놓으면 아래쪽 말풍선을 가려서
+   원문을 못 읽는다 (실측에서 이게 제일 거슬렸다). 박스에 마우스를 올리면 펼친다. */
+.mlr-label {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 2px;
+  padding: 2px 5px;
+  background: rgba(20, 20, 24, 0.9);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.35;
+  border-radius: 3px;
+  /* **한 줄로 강제하지 않는다.** 예전에는 `white-space: nowrap` + `overflow: hidden`
+     + `text-overflow: ellipsis` 였는데, 여러 줄짜리 대사의 번역이 화면에서 `…` 로
+     잘려 "번역이 되다가 만다" 로 보였다. 원문이 길면 번역도 길다 — 줄을 접어서
+     다 보여 주는 쪽이 맞다. 겹침은 layoutLabels() 가 따로 푼다. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  width: max-content;
+  max-width: min(32vw, 340px);
+  opacity: 0;
+  transition: opacity 0.08s;
+}
+
+/* 마우스가 박스 위에 있을 때만 보인다. 오버레이 자체는 pointer-events:none 이므로
+   박스에만 되살려 준다 — 뷰어 조작은 그대로 통과한다. */
+.mlr-box {
+  pointer-events: auto;
+}
+
+.mlr-box:hover .mlr-label,
+#mlr-overlay.mlr-show-all .mlr-label {
+  opacity: 1;
+}
+
+/* 마우스를 올린 라벨은 **항상 맨 위로.** 겹침 배치를 해도 완전히는 못 없애므로,
+   지금 읽으려는 것만은 무조건 보여야 한다. */
+.mlr-box:hover {
+  z-index: 2;
+}
+
+.mlr-box:hover .mlr-label {
+  background: rgba(10, 10, 14, 0.97);
+}
+
+/* 전부 펼친 상태에서는 라벨이 서로 가리지 않게 조금 줄인다 —
+   겹침 배치(layoutLabels)와 같이 쓴다. */
+#mlr-overlay.mlr-show-all .mlr-label {
+  font-size: 11px;
+  max-width: min(22vw, 240px);
+}
+
+/* 화면 아래쪽 박스는 라벨을 위로 붙인다 */
+.mlr-box.mlr-label-above .mlr-label {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 2px 0;
+}
+
+.mlr-box.mlr-translated .mlr-label {
+  background: rgba(120, 72, 8, 0.94);
+}
+
+/* 효과음(`sfx`)과 이야기 밖의 글(`extra` — 사이트 UI·광고·판권)은 기본으로 숨긴다.
+   번역 모델이 원문을 보고 분류한 것이라 서버의 `is_bubble` 보다 훨씬 믿을 만하다.
+
+   `narration` 은 숨기지 않는다. 나레이션 상자·화 제목·간판은 이야기의 일부라
+   숨기면 내용이 끊긴다.
+
+   그래도 틀릴 수 있으니 루트에 `.mlr-show-extra` 가 붙으면(Alt+Shift+S) 도로 나온다. */
+/* **`display: none` 이 아니라 페이드다.** 박스는 검출 직후 초록으로 떴다가 번역이
+   도착해야 효과음인지 알 수 있다. 그때 즉시 사라지면 "떴다가 없어졌다" 로 보여
+   버그처럼 읽힌다. 0.25초에 걸쳐 흐려지면 걸러졌다는 것이 눈에 보인다. */
+.mlr-box.mlr-kind-sfx,
+.mlr-box.mlr-kind-extra {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+
+#mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-sfx,
+#mlr-overlay.mlr-show-extra .mlr-box.mlr-kind-extra {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   드래그로 영역 고르기 (Alt+Shift+D)
+
+   `#mlr-overlay` 와 달리 **포인터 이벤트를 먹는다.** 통과시키면 canvas 뷰어의
+   자기 드래그 핸들러(페이지 넘김)가 먼저 가로챈다.
+   --------------------------------------------------------------------------- */
+
+#mlr-select {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  cursor: crosshair;
+  background: rgba(10, 10, 14, 0.35);
+  font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  /* 드래그 중 페이지 텍스트가 선택되면 파란 하이라이트가 캡처에 남는다 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 고른 영역만 원래 밝기로 되돌린다 — 무엇을 잡았는지 보여야 한다.
+   큰 box-shadow 로 바깥을 덮으면 덮개 배경과 겹쳐 두 겹이 되므로,
+   여기서는 배경을 지우고 테두리만 그린다. */
+#mlr-select .mlr-sel-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 176, 32, 0.95);
+  background: rgba(255, 176, 32, 0.12);
+  /* 덮개의 어두운 층을 이 사각형에서만 상쇄한다 */
+  backdrop-filter: brightness(1.55);
+}
+
+#mlr-select .mlr-sel-hint {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: rgba(20, 20, 24, 0.92);
+  color: #e8e8ea;
+  font-size: 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+   조작 패널
+
+   `#mlr-overlay` 안에 있으므로 캡처 직전 `hide-overlay` 로 같이 숨는다 —
+   스크린샷에 버튼이 찍히면 검출기가 그걸 글자로 본다.
+
+   부모가 `pointer-events: none` 이라 여기만 `auto` 로 되돌린다.
+   --------------------------------------------------------------------------- */
+
+/* **세로로 쌓는다.** 가로 막대는 화면 위쪽을 가로질러 만화 윗부분을 가린다.
+   오른쪽 끝 세로 기둥이면 만화(보통 가운데 정렬)와 거의 안 겹친다. */
+#mlr-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: rgba(20, 20, 24, 0.88);
+  border-radius: 6px;
+  pointer-events: auto;
+  /* 안 쓸 때는 흐리게 물러나 있는다. 마우스를 올리면 또렷해진다 —
+     "가린다" 는 불만의 절반은 늘 진하게 떠 있어서 생긴다. */
+  opacity: 0.45;
+  transition: opacity 0.12s;
+}
+
+#mlr-panel:hover {
+  opacity: 1;
+}
+
+#mlr-panel button {
+  all: unset;
+  padding: 6px 10px;
+  color: #c8c8cc;
+  font: 12px/1 "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+}
+
+#mlr-panel button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* 켜짐/꺼짐이 있는 버튼(자동·라벨·효과음)은 지금 상태가 보여야 한다 */
+#mlr-panel button.mlr-on {
+  background: rgba(255, 176, 32, 0.9);
+  color: #201a08;
+}
+
+/* ---------------------------------------------------------------------------
+   박스 우클릭 메뉴
+
+   패널과 같은 이유로 `#mlr-overlay` 안에 둔다 — 캡처 직전 같이 숨어야 한다.
+   --------------------------------------------------------------------------- */
+
+#mlr-menu {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  padding: 3px;
+  background: rgba(20, 20, 24, 0.95);
+  border-radius: 5px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  /* **박스보다 위여야 한다.** 마우스가 올라간 박스는 라벨을 읽히려고 z-index 2 로
+     올라가는데(.mlr-box:hover), 메뉴는 늘 그 박스 위에서 열리므로 더 높아야 한다.
+     조정 중인 박스(z-index 3)보다도 위. */
+  z-index: 10;
+}
+
+#mlr-menu button {
+  all: unset;
+  padding: 6px 10px;
+  color: #d8d8dc;
+  font: 12px/1 "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+#mlr-menu button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------------------
+   박스 크기 조정 (우클릭 → 크기 조정)
+
+   손잡이는 고른 박스 하나에만 붙는다. 전부에 달면 화면이 손잡이로 뒤덮인다.
+   --------------------------------------------------------------------------- */
+
+.mlr-box.mlr-resizing {
+  border-color: rgba(255, 176, 32, 1);
+  border-style: dashed;
+  z-index: 3;
+}
+
+/* 조정 중에는 라벨을 감춘다 — 손잡이를 가린다 */
+.mlr-box.mlr-resizing .mlr-label {
+  display: none;
+}
+
+.mlr-handle {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  background: rgba(255, 176, 32, 0.95);
+  border: 1px solid rgba(40, 26, 4, 0.9);
+  border-radius: 2px;
+  pointer-events: auto;
+}
+
+.mlr-h-nw { left: -6px;  top: -6px;    cursor: nwse-resize; }
+.mlr-h-n  { left: 50%;   top: -6px;    margin-left: -5px; cursor: ns-resize; }
+.mlr-h-ne { right: -6px; top: -6px;    cursor: nesw-resize; }
+.mlr-h-e  { right: -6px; top: 50%;     margin-top: -5px;  cursor: ew-resize; }
+.mlr-h-se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.mlr-h-s  { left: 50%;   bottom: -6px; margin-left: -5px; cursor: ns-resize; }
+.mlr-h-sw { left: -6px;  bottom: -6px; cursor: nesw-resize; }
+.mlr-h-w  { left: -6px;  top: 50%;     margin-top: -5px;  cursor: ew-resize; }
+
+/* 그 박스만 원문을 보는 중. 번역과 헷갈리지 않게 색을 바꾼다. */
+.mlr-box.mlr-showing-ja .mlr-label {
+  background: rgba(20, 60, 90, 0.95);
+}
+
+#mlr-menu button[disabled] {
+  color: #6a6a70;
+  cursor: default;
+}
+
+#mlr-menu button[disabled]:hover {
+  background: none;
+  color: #6a6a70;
+}
+
+/* 지금 소리내어 읽고 있는 박스. 어디를 읽는지 눈으로 따라갈 수 있어야 한다. */
+.mlr-box.mlr-speaking {
+  border-color: rgba(120, 220, 255, 1);
+  background: rgba(120, 220, 255, 0.18);
+  z-index: 2;
+}

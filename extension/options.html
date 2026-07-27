@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Manga Live Reader 설정</title>
+<style>
+  body {
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 24px;
+    max-width: 32rem;
+  }
+  label { display: block; margin-top: 16px; font-weight: 600; }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    margin-top: 4px;
+    font: inherit;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  p.hint { margin: 4px 0 0; color: #666; font-size: 13px; }
+  button { margin-top: 20px; padding: 6px 16px; font: inherit; }
+  #saved { margin-left: 12px; color: #2a7; }
+</style>
+
+<h1>Manga Live Reader</h1>
+
+<label for="url">서비스 주소</label>
+<input id="url" type="url" spellcheck="false" />
+<p class="hint">
+  서비스는 Tailscale 인터페이스에만 바인딩한다. 서비스가 도는 머신의 브라우저에서도
+  <code>127.0.0.1</code> 로는 못 붙으니 Tailscale 주소를 쓸 것.
+  <br />주소를 바꾸면 <code>manifest.json</code> 의 <code>host_permissions</code> 에도
+  같은 호스트를 넣고 확장을 다시 읽어야 한다.
+</p>
+
+<label for="token">인증 토큰</label>
+<input id="token" type="password" spellcheck="false" placeholder="(비어 있으면 안 보낸다)" />
+<p class="hint">
+  <code>service.toml</code> 의 <code>[server].auth_token</code> 과 같아야 한다.
+  <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
+</p>
+
+<button id="save">저장</button><span id="saved" hidden>저장했다</span>
+
+<h2 style="margin-top:32px;font-size:15px">캐시</h2>
+<p class="hint">
+  같은 페이지를 다시 읽으면 캐시가 걸려 번역 비용이 들지 않는다. 결과가 이상할 때는
+  만화 페이지에서 <b>「갱신」</b> 을 눌러 <b>그 페이지만</b> 지우는 쪽이 낫다 —
+  나머지는 그대로 두고 다시 읽는다.
+  <br />아래는 <b>전부</b> 지운다. 되돌릴 수 없고, 지운 페이지는 다시 읽을 때
+  번역 비용이 새로 든다.
+</p>
+<button id="purge">캐시 전부 지우기</button><span id="purged" hidden></span>
+
+<script src="options.js"></script>

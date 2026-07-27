@@ -1,0 +1,403 @@
+"""FastAPI 앱. DESIGN.md §4.
+
+`POST /read` 는 `text/event-stream` 이다 (§4.1). 이벤트 순서:
+
+    cached → ocr → translation* → done
+
+`ocr` 을 번역보다 먼저 흘리는 것이 요점이다. 검출+OCR 은 0.3초인데 번역은 9초라,
+한 방으로 돌려주면 9초 동안 화면에 아무것도 없다. 원문 핀(L1)을 먼저 띄우고 번역이
+도착하는 대로 채운다.
+
+**GPU 작업과 번역은 다른 자원이다.** 검출·OCR 은 상주 단일 워커에서, 번역은 네트워크
+I/O 라 별도 스레드에서 돈다. 번역이 9초 걸리는 동안 GPU 워커는 다음 페이지를 처리할
+수 있다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from typing import Any
+
+import cv2
+import numpy as np
+import torch
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+
+from mtl_shared.models import ReadMeta, ReadResult, Region, Timings
+
+from . import detect, metrics, ocr, order, translate
+from .cache import PageCache
+from .config import Config, load
+
+cfg: Config = load()
+
+_cache = PageCache(
+    cfg.cache.path,
+    fuzzy_hamming=cfg.cache.fuzzy_hamming,
+    retention_days=cfg.cache.retention_days,
+)
+
+#: 번역기는 프로세스당 하나. SDK 클라이언트가 커넥션 풀을 들고 있어 매번 만들면
+#: 소켓이 샌다. `None` 이면 아직 안 만든 것 — 키가 없으면 계속 None 이고, 번역
+#: 없이 OCR 만 흘린다 (M1 동작으로 자연스럽게 강등된다).
+_translator: translate.Translator | None = None
+_translator_lock = asyncio.Lock()
+
+
+async def get_translator() -> translate.Translator | None:
+    global _translator
+    if _translator is None:
+        async with _translator_lock:
+            if _translator is None:
+                try:
+                    kwargs = (
+                        {"effort": cfg.api.effort}
+                        if cfg.api.model_quality.startswith("claude-")
+                        else {}
+                    )
+                    _translator = translate.get_translator(
+                        cfg.api.model_quality, **kwargs
+                    )
+                except Exception as exc:  # 키 없음 등
+                    print(f"[warn] 번역기를 못 만들었다 — OCR 만 제공한다: {exc}")
+                    return None
+    return _translator
+
+# ---------------------------------------------------------------------------
+# GPU 전용 상주 워커
+#
+# GPU 작업(워밍업 포함)은 **전부 이 스레드 하나에서** 돈다.
+#
+# - GPU 는 하나다. 요청을 동시에 처리해봐야 서로 밀어낼 뿐이고, VRAM 사용량만
+#   예측 불가능해진다 (DESIGN.md §9.3 ComfyUI 공존).
+# - 워밍업도 같은 워커에 태운다. 일회성 스레드에서 예열하면 예열 상태가
+#   그 스레드의 수명에 묶일 여지가 있고, 이득도 없다.
+# - 이벤트 루프를 막지 않으므로 긴 /read 처리 중에도 /health 는 즉답한다
+#   (실측 2.9ms).
+# ---------------------------------------------------------------------------
+
+_gpu = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
+
+
+async def on_gpu(fn: Callable[..., Any], *args: Any) -> Any:
+    return await asyncio.get_running_loop().run_in_executor(_gpu, fn, *args)
+
+
+#: 번역은 네트워크 I/O 다. GPU 워커를 막으면 안 되므로 별도 풀에서 돈다.
+_net = ThreadPoolExecutor(max_workers=4, thread_name_prefix="net")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if cfg.models.resident:
+        # await 하지 않는다. 3-5초 동안 /health 가 막히면 클라이언트가 서비스를
+        # 죽은 것으로 오인한다. 워커는 계속 살아 있으므로 예열이 유지된다.
+        _gpu.submit(warm)
+    yield
+    _gpu.shutdown(wait=False)
+    _net.shutdown(wait=False)
+    _cache.close()
+
+
+app = FastAPI(title="mtl-service", version="0.1.0", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# 인증 (DESIGN.md §4.4)
+# ---------------------------------------------------------------------------
+
+
+def require_token(x_auth_token: str | None = Header(default=None)) -> None:
+    """공유 시크릿 검증.
+
+    서비스는 Tailscale 인터페이스에만 바인딩되므로 이 토큰은 이중 방어다.
+    실수로 다른 인터페이스에 열렸을 때 마지막 방어선이 된다.
+    """
+    if cfg.server.auth_disabled:
+        return
+    if not cfg.server.auth_token:
+        raise HTTPException(500, "auth_token 이 설정되지 않았다. service.toml 확인")
+    if x_auth_token != cfg.server.auth_token:
+        raise HTTPException(401, "X-Auth-Token 불일치")
+
+
+# ---------------------------------------------------------------------------
+# 모델 상주 (DESIGN.md §9.3, §14)
+# ---------------------------------------------------------------------------
+
+
+def warm() -> dict[str, int]:
+    """모델을 로드하고 **실제 추론 경로까지 한 번 태운다**.
+
+    로드만 해두는 것으로는 부족하다. 검출기도 OCR 도 첫 추론에서 CUDA 커널
+    자동튜닝 비용을 크게 낸다 (OCR 배치는 최대 24초). 그 값을 첫 페이지가
+    치르면 §1 의 2초 예산이 무의미해진다.
+    """
+    t0 = time.perf_counter()
+    detector = detect.get_detector(cfg)
+    detector(np.zeros((1400, 1000, 3), np.uint8))
+    t1 = time.perf_counter()
+    ocr.warmup(cfg)
+    t2 = time.perf_counter()
+    return {
+        "detector_ms": int((t1 - t0) * 1000),
+        "ocr_ms": int((t2 - t1) * 1000),
+        "total_ms": int((t2 - t0) * 1000),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 엔드포인트
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    """DESIGN.md §4.2. 클라이언트가 기동 시 호출해 모델 상태를 확인한다."""
+    gpu = None
+    vram = 0
+    if torch.cuda.is_available():
+        gpu = torch.cuda.get_device_name(0)
+        vram = int(torch.cuda.memory_reserved(0) / 1e6)
+    return {
+        "status": "ok",
+        "models_loaded": detect.is_loaded() and ocr.is_loaded(),
+        "gpu": gpu,
+        "vram_used_mb": vram,
+    }
+
+
+@app.post("/warmup", dependencies=[Depends(require_token)])
+async def warmup() -> dict[str, int]:
+    """DESIGN.md §4.3. 모델을 강제 로드한다. 응답까지 3-5초."""
+    return await on_gpu(warm)
+
+
+@app.post("/cache/purge", dependencies=[Depends(require_token)])
+async def cache_purge(body: dict[str, Any] | None = None) -> dict[str, int]:
+    """캐시를 지운다.
+
+    `{"all": true}` → 전부.
+    `{"phash": "...", "profile": "..."}` → 그 화면과 같은 것으로 보이는 행만.
+
+    페이지 단위 지우기는 **조회와 같은 퍼지 기준**을 쓴다. 정확 일치만 지우면
+    캡처가 매번 몇 비트씩 달라서 정작 보고 있는 페이지의 행이 안 지워진다.
+    """
+    body = body or {}
+    if body.get("all"):
+        return {"deleted": _cache.purge_all()}
+    phash, profile = body.get("phash"), body.get("profile")
+    if not phash or not profile:
+        raise HTTPException(400, "phash 와 profile 이 필요하다 (또는 all=true)")
+    return {"deleted": _cache.purge_near(str(phash), str(profile))}
+
+
+def sse(event: str, data: object) -> str:
+    """SSE 한 프레임. `data` 는 한 줄 JSON 이어야 한다 — 개행이 들어가면 프레임이 깨진다."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/read", dependencies=[Depends(require_token)])
+async def read(image: UploadFile = File(...), meta: str = Form(...)) -> StreamingResponse:
+    """DESIGN.md §4.1. 좌표는 전부 **전송된 이미지 좌표계** 기준으로 돌려준다.
+
+    입력 검증은 스트림을 열기 **전에** 끝낸다. 잘못된 요청에 200 + `event: error` 를
+    주면 클라이언트가 성공으로 오인하기 쉽다 — 400 으로 즉답하는 게 맞다.
+    """
+    try:
+        parsed = ReadMeta.from_dict(json.loads(meta))
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(400, f"meta 파싱 실패: {exc}") from exc
+
+    payload = await image.read()
+    img = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "이미지 디코드 실패")
+
+    return StreamingResponse(
+        _read_events(img, parsed, len(payload)),
+        media_type="text/event-stream",
+        # 프록시가 버퍼링하면 스트리밍이 의미를 잃는다. Tailscale 직결이라 지금은
+        # 프록시가 없지만, 나중에 하나라도 끼면 조용히 망가진다.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
+    """`cached` → `ocr` → `translation`* → `done` 순서로 흘린다."""
+    t_start = time.perf_counter()
+    try:
+        # `refresh` 는 "이 페이지를 캐시 무시하고 다시" 다. 조회를 건너뛰는 것만으로는
+        # 부족하다 — 낡은 행을 안 치우면 다음 조회에서 그게 다시 이긴다. 새 결과는
+        # 저장한다 (그래야 다음부터 캐시가 먹는다). `no_cache` 와 다른 점이다.
+        if parsed.refresh and not parsed.no_cache:
+            _cache.purge_near(parsed.phash, parsed.profile)
+        skip_read = parsed.no_cache or parsed.refresh
+        hit = None if skip_read else _cache.get(parsed.phash, parsed.profile, parsed.mode)
+        yield sse("cached", {"hit": hit is not None, "fuzzy": bool(hit and hit.fuzzy)})
+
+        if hit is not None:
+            regions = hit.ocr
+            timings = Timings(detect=0, mask=0, order=0, ocr=0, translate=0, total=0)
+        else:
+            result = await on_gpu(pipeline, img, parsed)
+            regions = [r.to_dict() for r in result.regions]
+            timings = result.timings
+            # `no_cache` 는 **읽지도 쓰지도 않는다.**
+            #
+            # 이 플래그는 손으로 고른 읽기(영역 지정·다시 읽기)에 붙는데, 그건
+            # 페이지의 **일부 크롭**이다. 부분 크롭은 대부분 흰 바탕이라 지각 해시가
+            # 밋밋해서, 서로 다른 말풍선끼리도 해밍 거리가 가까워진다 — 실측 캐시에서
+            # 다른 두 부분 영역이 거리 14 로 붙어 있었다(문턱 20). 페이지 전체는
+            # 서로 100 이상 벌어지므로 안전하지만 부분 크롭은 아니다.
+            #
+            # 게다가 같은 크롭을 다시 요청할 일도 없다. 쓰면 위험만 늘고 이득이 없다.
+            if not parsed.no_cache:
+                _cache.put_ocr(parsed.phash, parsed.profile, regions)
+
+        yield sse("ocr", {"regions": regions})
+
+        # -- 번역 -----------------------------------------------------------
+        translate_ms = 0
+        if hit is not None and hit.translation is not None:
+            for tr in hit.translation:
+                yield sse("translation", tr)
+        elif regions:
+            t0 = time.perf_counter()
+            collected: list[dict[str, object]] = []
+            async for kind, payload in _translate_stream(regions, parsed):
+                if kind == "error":
+                    # 번역만 실패한 것이다. 원문은 이미 흘렸으므로 스트림을 죽이지
+                    # 않고 알리기만 한다 — 클라이언트는 L1 핀으로 원문을 읽는다.
+                    yield sse("error", {"stage": "translate", "message": payload})
+                    break
+                collected.append(payload)
+                yield sse("translation", payload)
+            translate_ms = int((time.perf_counter() - t0) * 1000)
+            if collected:
+                if not parsed.no_cache:
+                    _cache.put_translation(parsed.phash, parsed.mode, collected)
+
+        timings.translate = translate_ms
+        timings.total = int((time.perf_counter() - t_start) * 1000)
+        yield sse("done", {"reordered": False, "timings": timings.to_dict()})
+
+        metrics.record(
+            cfg.metrics.jsonl_path,
+            phash=parsed.phash,
+            profile=parsed.profile,
+            regions=len(regions),
+            upload_bytes=upload_bytes,
+            cached=hit is not None,
+            **timings.to_dict(),
+        )
+    except Exception as exc:  # 여기까지 오면 스트림을 닫는다 (§4.1)
+        yield sse("error", {"stage": "read", "message": f"{type(exc).__name__}: {exc}"})
+
+
+async def _translate_stream(regions: list[dict[str, object]], parsed: ReadMeta):
+    """번역 스트림을 async 로 중계한다. `("region", {...})` 또는 `("error", "메시지")`.
+
+    SDK 스트림은 **동기 제너레이터**다. 이벤트 루프에서 직접 소진하면 9초 동안 서버
+    전체가 멈춘다. 별도 스레드에서 돌리고 큐로 건네받는다 — 스레드가 `put` 할 때는
+    `call_soon_threadsafe` 를 써야 한다 (asyncio.Queue 는 스레드 안전하지 않다).
+    """
+    translator = await get_translator()
+    if translator is None:
+        yield "error", "번역기가 없다 (API 키 미설정)"
+        return
+
+    previous: list[str] = []
+    if parsed.prev_page_phash:
+        previous = _cache.previous_texts(parsed.prev_page_phash, parsed.profile)
+
+    stubs = [
+        Region(
+            id=int(r["id"]),
+            text=str(r["text"]),
+            bbox=tuple(r["bbox"]),  # type: ignore[arg-type]
+            is_bubble=bool(r["is_bubble"]),
+            vertical=bool(r["vertical"]),
+            mask_rle="",
+            fill_rgb=None,
+            fill_confidence=0.0,
+        )
+        for r in regions
+    ]
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    _DONE = object()
+
+    def pump() -> None:
+        try:
+            for tr in translator.translate_stream(stubs, parsed.mode, previous):
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    (
+                        "region",
+                        {
+                            "id": tr.id,
+                            "ko": tr.ko,
+                            # 클라이언트는 이걸로 효과음·잡문을 숨긴다. `is_bubble` 은
+                            # 스크린톤 배경에서 틀리므로 필터로 쓰면 안 된다 (DEVLOG).
+                            "kind": tr.kind,
+                            "note": tr.note or None,
+                        },
+                    ),
+                )
+        except Exception as exc:
+            loop.call_soon_threadsafe(
+                queue.put_nowait, ("error", f"{type(exc).__name__}: {exc}")
+            )
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+    _net.submit(pump)
+    while True:
+        item = await queue.get()
+        if item is _DONE:
+            return
+        yield item
+
+
+def pipeline(img: np.ndarray, parsed: ReadMeta) -> ReadResult:
+    """검출 → 정렬 → OCR. **GPU 워커 스레드에서만** 호출할 것."""
+    t0 = time.perf_counter()
+    detected = detect.detect(img, cfg)
+
+    t1 = time.perf_counter()
+    ordered = order.sort_regions(
+        detected.regions, (img.shape[1], img.shape[0]), cfg.order.min_gap_ratio
+    )
+    if not parsed.include_sfx:
+        # is_bubble 값 자체는 응답에 그대로 싣는다 (§8.1). 여기서는 필터만.
+        ordered = [r for r in ordered if r.is_bubble]
+    order.assign_ids(ordered)
+    t2 = time.perf_counter()
+
+    result_regions = ocr.run(img, ordered, cfg)
+    # OCR 에서 버려진 region 이 있으면 번호에 구멍이 난다. 다시 매긴다.
+    order.assign_ids(result_regions.regions)
+
+    total_ms = int((time.perf_counter() - t0) * 1000)
+    return ReadResult(
+        regions=result_regions.regions,
+        translations=[],  # M2
+        reordered=False,
+        cached=False,
+        timings=Timings(
+            detect=detected.detect_ms,
+            mask=detected.mask_ms,
+            order=int((t2 - t1) * 1000),
+            ocr=result_regions.ocr_ms,
+            translate=0,
+            total=total_ms,
+        ),
+    )

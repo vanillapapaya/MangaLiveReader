@@ -1,0 +1,34 @@
+# 비밀값. 절대 커밋 금지 (src/mtl_service/env.py 참조)
+.env.local
+.env
+env
+
+# 산출물
+.venv/
+.venv-linux/
+__pycache__/
+*.pyc
+.pytest_cache/
+models/
+logs/
+cache/
+debug/
+
+# 에이전트 세션 부산물
+.claude/
+
+# ---------------------------------------------------------------------------
+# 만화 캡처 — **저작물이다. 커밋하지 않는다.**
+#
+# 검증에 쓴 실물 스크린샷이 400MB 넘게 있다 (test/pages 129MB, cropped 118MB,
+# debug52 114MB …). 측정 결과는 DEVLOG.md 에, 정답 표는 test/fixtures/*.json 에
+# 남기고 **이미지 자체는 남기지 않는다.**
+# ---------------------------------------------------------------------------
+test/pages/
+test/cropped/
+test/debug*/
+test/mac/
+test/ab/
+*.png
+*.jpg
+*.jpeg
