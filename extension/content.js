@@ -1517,6 +1517,9 @@ document.addEventListener("keydown", (e) => {
 
 /** 신호를 몰아서 한 번만 올린다. background 가 다시 debounce 하므로 여기서는 짧게. */
 const notifyMaybeChanged = throttle(() => {
+  // DOM 이 움직였으면 주소가 바뀌었을 수도 있다 (SPA 는 pushState 로 옮겨 다니는데
+  // 그건 이벤트를 안 낸다). 자동 감지가 꺼져 있어도 이건 봐야 한다.
+  onNavigated();
   if (!autoOn) return;
   send({ type: "page-maybe-changed" });
 }, 250);
@@ -1542,7 +1545,50 @@ try {
   loadVoices();
 } catch {}
 
-document.addEventListener("click", notifyMaybeChanged, true);
+// ---------------------------------------------------------------------------
+// 다른 화면으로 가면 오버레이를 치운다
+//
+// SPA 뷰어(목차 → 화 넘기기 등)는 페이지를 다시 불러오지 않아 콘텐츠 스크립트가
+// 그대로 산다. 그러면 **옛 박스가 새 화면 위에 그대로 떠 있다** — 엉뚱한 그림에
+// 번역이 얹힌 것처럼 보인다.
+//
+// 주소가 바뀌면 그건 확실히 다른 화면이다. 박스를 지우고 페이지 신원도 버린다.
+// ---------------------------------------------------------------------------
+
+let lastUrl = location.href;
+
+function onNavigated() {
+  if (location.href === lastUrl) return;
+  lastUrl = location.href;
+  const root = document.getElementById(OVERLAY_ID);
+  if (root) {
+    reset();
+    extraCount = 0;
+    status("다른 화면으로 옮겼다 — 다시 읽어야 한다");
+  }
+  // 손으로 한 작업은 페이지별로 저장돼 있으므로 여기서 버려도 안전하다.
+  pageKey = null;
+  removedMarks = [];
+  stopSpeaking();
+  cancelSelection();
+  closeMenu();
+}
+
+addEventListener("popstate", onNavigated);
+addEventListener("hashchange", onNavigated);
+// pushState/replaceState 는 이벤트를 안 낸다. MutationObserver 신호에 얹어 확인한다.
+
+// **우리 오버레이 위 클릭은 신호가 아니다.** 박스나 패널을 누른 것은 페이지를
+// 넘긴 것이 아닌데, 그걸 신호로 잡으면 0.7초 뒤 확인 캡처가 돌아 화면이 깜빡인다
+// ("박스를 클릭하면 깜빡이고 뭔가 바뀌는 것 같다" 는 제보의 정체다).
+document.addEventListener(
+  "click",
+  (e) => {
+    if (isOurs(e.target)) return;
+    notifyMaybeChanged();
+  },
+  true
+);
 // **휠은 신호에서 뺐다.** 스크롤은 페이지 넘김이 아닌 경우가 대부분인데, 확인할
 // 때마다 캡처하느라 오버레이가 숨었다 돌아와 **깜빡인다.** 게다가 이제 박스가
 // 뷰어를 따라가므로(followViewer) 스크롤해도 결과가 어긋나지 않아 다시 읽을 이유가
@@ -1563,10 +1609,10 @@ document.addEventListener(
   true
 );
 
-/** 우리 오버레이가 만든 변화는 무시한다 — 안 그러면 무한 루프다. */
+/** 우리 오버레이가 만든 것인가. DOM 변화와 클릭 신호를 거를 때 같이 쓴다. */
 function isOurs(node) {
   for (let n = node; n; n = n.parentNode) {
-    if (n.id === OVERLAY_ID || n.id === SELECT_ID) return true;
+    if (n.id === OVERLAY_ID || n.id === SELECT_ID || n.id === MENU_ID) return true;
   }
   return false;
 }

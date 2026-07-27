@@ -81,6 +81,40 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 // 탭에서 캡처를 일으키면 안 된다.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 직전 페이지 (번역 문맥)
+//
+// 만화 대사는 페이지를 넘어 이어진다. 주어를 생략한 문장의 화자, 존댓말/반말,
+// 말꼬리가 앞 페이지에 달려 있다 (`DESIGN.md` §8.4). 서버는 `prev_page_phash` 를
+// 받으면 그 페이지 원문을 캐시에서 꺼내 번역기에 문맥으로 준다.
+//
+// **탭별로 둔다.** 탭마다 다른 작품을 볼 수 있다.
+// **전체 읽기만 기록한다.** 부분 읽기(영역·다시 읽기)는 페이지가 아니라 조각이라
+// 다음 페이지의 문맥이 될 수 없다.
+// ---------------------------------------------------------------------------
+
+/** tabId → 직전 전체 읽기의 phash. `storage.session` 에도 남긴다 —
+ *  MV3 워커는 30초 유휴로 죽고, 메모리만 쓰면 페이지 두어 장마다 문맥이 끊긴다. */
+const lastPage = new Map();
+const PREV_KEY = (tabId) => `mlr-prev-${tabId}`;
+
+async function getPrevPage(tabId) {
+  if (lastPage.has(tabId)) return lastPage.get(tabId);
+  try {
+    const got = await chrome.storage.session.get(PREV_KEY(tabId));
+    const v = got[PREV_KEY(tabId)] ?? null;
+    if (v) lastPage.set(tabId, v);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+function setPrevPage(tabId, phash) {
+  lastPage.set(tabId, phash);
+  chrome.storage.session.set({ [PREV_KEY(tabId)]: phash }).catch(() => {});
+}
+
 /** tabId → { lastHash, lastAt, timer, busy } — 메모리 사본 */
 const watching = new Map();
 
@@ -107,7 +141,14 @@ async function loadState(tabId) {
 
 function saveState(tabId, st) {
   chrome.storage.session
-    .set({ [KEY(tabId)]: { on: true, lastHash: st.lastHash, lastAt: st.lastAt } })
+    .set({
+      [KEY(tabId)]: {
+        on: true,
+        lastHash: st.lastHash,
+        lastAt: st.lastAt,
+        needsBaseline: Boolean(st.needsBaseline),
+      },
+    })
     .catch(() => {});
 }
 
@@ -161,18 +202,27 @@ async function check(tab) {
   try {
     // 자동 확인은 **지난 읽기와 같은 영역**을 잘라야 한다. 매번 뷰어를 다시 찾으면
     // 영역이 흔들려 해시가 달라지고, 같은 페이지를 계속 다시 번역한다.
-    const prepared = await prepare(tab, null, true);
+    // 오버레이는 숨기지 않는다 (위 `keepOverlay` 주석 — 깜빡임의 원인이다).
+    const prepared = await prepare(tab, null, true, true);
     // 바뀌었든 아니든 확인한 시각을 남긴다. 안 그러면 "안 바뀜" 이 이어질 때
-    // 확인이 몰려 캡처가 잦아지고 화면이 깜빡인다.
+    // 확인이 몰려 캡처가 잦아진다.
     st.lastAt = Date.now();
-    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) {
-      // 같은 화면이다. 오버레이를 되살리고 조용히 끝낸다.
-      await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
+
+    // 읽은 직후에는 오버레이가 새 박스로 바뀌어 있다. 그건 페이지가 바뀐 것이
+    // 아니므로, 다음 비교를 위한 **기준만 새로 잡고** 끝낸다.
+    if (st.needsBaseline) {
+      st.needsBaseline = false;
+      st.lastHash = prepared.ahash;
+      saveState(tab.id, st);
       return;
     }
+    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) return; // 같은 화면
+
     st.lastHash = prepared.ahash;
     saveState(tab.id, st);
-    await run(tab, null, prepared);
+    // **여기서는 캡처를 재사용하지 않는다.** 오버레이가 찍혀 있어 OCR 에 못 쓴다.
+    // 다시 읽는 순간은 어차피 번역에 몇 초를 쓰므로 캡처 한 번이 아깝지 않다.
+    await run(tab);
   } catch {
     // 탭이 닫혔거나 캡처가 막혔다. 다음 신호에서 다시 해 본다.
     await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
@@ -185,6 +235,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const st = watching.get(tabId);
   if (st) clearTimeout(st.timer);
   watching.delete(tabId);
+  lastPage.delete(tabId);
+  chrome.storage.session.remove(PREV_KEY(tabId)).catch(() => {});
   chrome.storage.session.remove(KEY(tabId)).catch(() => {});
 });
 
@@ -246,7 +298,7 @@ async function purgePage(tab) {
  *
  *  @param override 뷰어 자동 탐지 대신 쓸 사각형. 없으면 probe 한다.
  */
-async function prepare(tab, override = null, stable = false) {
+async function prepare(tab, override = null, stable = false, keepOverlay = false) {
   // 1. 뷰어 요소의 CSS 사각형을 콘텐츠 스크립트에서 받는다.
   //    **OS 캡처 경로에는 없는 정보다.** 화면 좌표를 추측하는 대신 DOM 이
   //    "만화가 여기 있다" 고 알려준다.
@@ -259,7 +311,13 @@ async function prepare(tab, override = null, stable = false) {
 
   // 2. 오버레이를 지우고 캡처한다 (§5.2 캡처 피드백 루프).
   //    OS 캡처와 달리 우리가 직접 숨기므로 결정론적이다.
-  await chrome.tabs.sendMessage(tab.id, { type: "hide-overlay" });
+  //
+  //    **자동 감지의 "바뀌었나" 확인은 숨기지 않는다** (`keepOverlay`).
+  //    숨겼다 되살리는 것이 곧 **깜빡임**인데, 확인은 4초에 한 번까지 일어나므로
+  //    화면이 쉼 없이 깜빡인다. 비교하는 두 캡처에 **같은 오버레이가 똑같이**
+  //    찍히므로 판정에는 지장이 없다 — 아래 만화가 바뀌어야 해시가 달라진다.
+  //    진짜로 읽을 때는 당연히 숨긴다 (박스가 찍히면 검출기가 글자로 읽는다).
+  if (!keepOverlay) await chrome.tabs.sendMessage(tab.id, { type: "hide-overlay" });
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
 
   // 3. 뷰어 영역만 잘라 §5.4 규격으로 정규화한다.
@@ -291,11 +349,15 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     });
 
     // 4. 서비스로 보내고 SSE 를 흘려받는다.
+    //    직전 페이지를 문맥으로 넘긴다. 방금 읽은 그 페이지를 자기 문맥으로 주면
+    //    같은 원문을 두 번 넣는 꼴이므로 부분 읽기에서는 보내지 않는다.
+    const prevPage = override ? null : await getPrevPage(tab.id);
     const meta = {
       phash,
       profile: hostToProfile(tab.url),
       mode: "natural",
-      prev_page_phash: null,
+      // 방금 읽은 그 페이지를 자기 문맥으로 주면 안 된다 — 같은 원문을 두 번 넣는 꼴이다.
+      prev_page_phash: prevPage,
       // **켜 둔다.** 끄면 `is_bubble = false` 인 region 이 서버에서 걸러지는데,
       // 실측(sunday-webry)에서 그 판정이 틀리는 경우가 있었다 — 스크린톤 배경 위
       // 말풍선이 "그림 위" 로 오판돼 5개가 통째로 사라졌다(17개 → 22개).
@@ -315,21 +377,29 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     const { serviceUrl, authToken } = await settings();
     let resp;
     try {
-      resp = await fetch(serviceUrl, {
-        method: "POST",
-        body: form,
-        headers: authToken ? { "X-Auth-Token": authToken } : {},
-      });
+      resp = await postWithRetry(serviceUrl, form, authToken, say);
     } catch (err) {
       // fetch 가 통째로 실패하면 브라우저가 이유를 안 알려 준다 (서비스가 죽었는지,
       // 방화벽인지, host_permissions 가 없는지 구분 불가). 짚을 곳을 알려 준다.
+      // fetch 가 통째로 실패한 이유가 **권한 없음**인 경우가 가장 흔하다.
+      // 그건 여기서 바로 확인할 수 있으니 먼저 짚어 준다.
+      let hint = "";
+      try {
+        const origin = `${new URL(serviceUrl).origin}/*`;
+        if (!(await chrome.permissions.contains({ origins: [origin] }))) {
+          hint = ` — ${origin} 권한이 없다. 확장 옵션 화면에서 「저장」을 눌러 허용할 것`;
+        }
+      } catch {}
       throw new Error(
-        `${serviceUrl} 에 못 붙었다. 서비스가 떠 있는지, ` +
-          `manifest.json 의 host_permissions 에 이 주소가 있는지, ` +
-          `윈도우 방화벽이 8788 을 막는지 확인 (${err.message})`
+        `${serviceUrl} 에 못 붙었다${hint}. 서비스가 떠 있는지, 방화벽이 8788 을 ` +
+          `막는지도 확인 (${err.message})`
       );
     }
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${await resp.text()}`);
+
+    // 다음 페이지의 문맥이 될 수 있게 기억한다. 부분 읽기는 제외한다 (조각이라
+    // 문맥으로 못 쓴다). 캐시 적중이든 아니든 "방금 본 페이지" 인 것은 같다.
+    if (!override) setPrevPage(tab.id, phash);
 
     // 수동으로 읽었어도 자동 감지의 기준 해시를 맞춰 둔다. 안 그러면 바로
     // 다음 신호에서 "바뀌었다" 로 보고 같은 페이지를 또 읽는다.
@@ -339,7 +409,9 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     // 박스를 지워 버린다.
     const st = override ? null : watching.get(tab.id);
     if (st) {
-      st.lastHash = prepared?.ahash ?? st.lastHash;
+      // 오버레이가 새 박스로 바뀌므로 지금 해시는 다음 비교의 기준이 될 수 없다.
+      // 다음 확인 때 기준만 새로 잡게 표시해 둔다.
+      st.needsBaseline = true;
       saveState(tab.id, st);
     }
 
@@ -447,6 +519,43 @@ function averageHash(canvas) {
   return bits;
 }
 
+//: 재시도 간격. 늘려 가며 세 번까지 해 본다 — API 가 잠깐 흔들리는 것과
+//: 진짜로 안 되는 것을 가르기에 충분하고, 오래 매달리지도 않는다.
+const RETRY_DELAYS_MS = [800, 2500];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 서비스에 POST 한다. 일시적 실패는 다시 해 본다.
+ *
+ * 예전에는 한 번 실패하면 그 페이지는 그냥 끝이었다 — 네트워크가 한 번 끊기거나
+ * 서버가 재시작 중이면 사용자가 직접 다시 눌러야 했다.
+ *
+ * **재시도하면 안 되는 것은 구별한다.** 400(잘못된 요청)·401(인증)은 다시 해도
+ * 같은 답이 온다. 5xx 와 네트워크 오류만 다시 한다.
+ */
+async function postWithRetry(url, form, authToken, say) {
+  let lastErr;
+  for (let i = 0; i <= RETRY_DELAYS_MS.length; i++) {
+    if (i > 0) {
+      say("status", { message: `다시 시도 ${i}/${RETRY_DELAYS_MS.length}…` });
+      await sleep(RETRY_DELAYS_MS[i - 1]);
+    }
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        body: form,
+        headers: authToken ? { "X-Auth-Token": authToken } : {},
+      });
+      // 4xx 는 우리가 잘못 보낸 것이다. 다시 해도 같으니 바로 올린다.
+      if (resp.ok || (resp.status >= 400 && resp.status < 500)) return resp;
+      lastErr = new Error(`HTTP ${resp.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 /** SSE 스트림을 [이벤트, 데이터] 로 흘린다. */
 async function* readSSE(resp) {
   const reader = resp.body.getReader();
@@ -481,7 +590,10 @@ function bitsToHex(bits) {
   return hex;
 }
 
-/** service.toml 의 [profiles.*] 이름으로 맞춘다. 없으면 호스트명 그대로. */
+/** service.toml 의 [profiles.*] 이름으로 맞춘다. 없으면 호스트명 그대로.
+ *
+ * **프로필은 캐시 키의 일부다.** 같은 사이트가 `www` 있고 없고로 갈리면 캐시도
+ * 갈려서 같은 페이지를 두 번 번역한다. `www.` 는 벗겨서 맞춘다. */
 function hostToProfile(url) {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");

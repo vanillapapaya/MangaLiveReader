@@ -95,6 +95,16 @@ _net = ThreadPoolExecutor(max_workers=4, thread_name_prefix="net")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # 보존 기간이 지난 캐시를 치운다. **기동 때 한 번이면 충분하다** — 크론이나
+    # 타이머를 걸 만큼 급한 일이 아니고(하루 이틀 늦게 지워져도 무해하다), 서비스는
+    # 만화를 읽을 때마다 새로 뜬다. 실행 중 무한정 쌓이는 것만 막으면 된다.
+    try:
+        gone = _cache.purge_expired()
+        if gone:
+            print(f"만료 캐시 {gone}개 정리 (보존 {cfg.cache.retention_days}일)")
+    except Exception as exc:  # 캐시 정리 실패로 서비스가 안 뜨면 안 된다
+        print(f"[warn] 캐시 정리 실패: {exc}")
+
     if cfg.models.resident:
         # await 하지 않는다. 3-5초 동안 /health 가 막히면 클라이언트가 서비스를
         # 죽은 것으로 오인한다. 워커는 계속 살아 있으므로 예열이 유지된다.
