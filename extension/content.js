@@ -1095,6 +1095,27 @@ let currentUtterance = null;
 // 제일 나쁘다.
 // ---------------------------------------------------------------------------
 
+//: 말풍선 사이 기본 간격. 사람이 다음 칸으로 눈을 옮기는 정도.
+const SPEAK_GAP_MS = 420;
+
+//: 문장이 끝났으면 조금 더 쉰다 — 이어지는 대사와 끝난 대사는 다르게 들려야 한다.
+const SPEAK_GAP_END_MS = 700;
+
+/** 이 대사 뒤에 얼마나 쉴까. 원문의 끝맺음을 보고 정한다. */
+function gapFor(cur) {
+  const t = (cur.text || "").trim();
+  if (!t) return SPEAK_GAP_MS;
+  // 「…」 로 끝나면 말이 이어지는 중이다. 오래 쉬면 흐름이 끊긴다.
+  // **전각 `．`(U+FF0E)를 빠뜨리면 안 된다** — manga-ocr 은 말줄임을 그걸로 낸다
+  // (「なんか．．．」). 반각 `.` 이나 `。` 만 보면 이어지는 말을 끝난 것으로 읽는다.
+  if (/[…‥。．.]{2,}$/.test(t) || /[、,]$/.test(t)) return SPEAK_GAP_MS;
+  // 문장이 닫혔으면(。！？ 등) 조금 더.
+  if (/[。．.!！?？♡♪]$/.test(t)) return SPEAK_GAP_END_MS;
+  return SPEAK_GAP_MS;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /** 지금 재생 중인 소리. 멈출 때 필요하다. */
 let audioSrc = null;
 let audioCtx = null;
@@ -1266,6 +1287,11 @@ async function speakAll() {
     }
     // **미리 받은 것과 다음 박스가 어긋나면 안 된다.** 여기서 한 칸씩 같이 민다.
     ready = await ahead;
+
+    // 말풍선 사이에 숨을 둔다. 붙여 놓으면 한 사람이 몰아치듯 들려서 어디서
+    // 끊기는지 알 수 없다. **재생이 합성보다 4배 빠르므로 이 틈은 공짜다** —
+    // 기다리는 동안 다음 것은 이미 합성돼 있다.
+    if (i + 1 < boxes.length && speaking) await sleep(gapFor(cur));
   }
 
   speaking = false;
