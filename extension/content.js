@@ -88,12 +88,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (live.length) {
           const u = unionRects(live.map((el) => el.getBoundingClientRect()));
           const rect = clampToViewport(u, window.innerWidth, window.innerHeight);
-          if (rect.width > 50 && rect.height > 50) {
+          const whole = Math.max(1, (u.right - u.left) * (u.bottom - u.top));
+          const seen = Math.max(0, rect.width) * Math.max(0, rect.height);
+          // **아직 화면에 충분히 남아 있을 때만 재사용한다.**
+          //
+          // 세로 스크롤 뷰어(yanmaga 등)는 페이지를 위아래로 쌓아 두고, 스크롤하면
+          // 읽던 페이지가 화면 밖으로 밀려나면서 **DOM 에는 그대로 붙어 있다.**
+          // `isConnected` 만 보면 이미 안 보이는 페이지를 계속 찍게 된다.
+          //
+          // 절반 넘게 보이면 "같은 페이지를 계속 보는 중" 이라 재사용하고, 그 아래로
+          // 내려가면 새로 찾는다.
+          if (seen / whole > 0.5 && rect.width > 50 && rect.height > 50) {
             sendResponse({ rect, tag: "고정", dpr: dpr(), count: live.length });
             return true;
           }
         }
-        sendResponse(probeViewer()); // 요소가 사라졌으면 새로 찾는다
+        sendResponse(probeViewer()); // 사라졌거나 화면 밖으로 나갔으면 새로 찾는다
       } catch (err) {
         sendResponse({ error: String(err?.stack || err) });
       }
