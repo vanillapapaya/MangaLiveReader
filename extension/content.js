@@ -143,6 +143,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "select-region":
       startSelection();
       break;
+    case "stale":
+      // 페이지가 바뀐 것이 확인됐다. 새 박스가 오기 전까지 **옛 번역을 치운다** —
+      // 새 그림 위에 이전 페이지의 번역이 얹혀 있는 것이 가장 거슬린다.
+      markStale();
+      break;
     case "auto-state":
       autoOn = msg.on;
       syncPanel();
@@ -176,6 +181,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
       } else {
         reset();
+        overlay().querySelector("#mlr-boxes")?.classList.remove("mlr-stale");
         extraCount = 0;
         // 페이지가 바뀌었으면 신원도 바뀐다. 부분 읽기는 조각의 해시라 안 쓴다.
         pageKey = msg.pageKey || null;
@@ -725,6 +731,16 @@ function toCss([x, y, w, h]) {
     width: w * k,
     height: h * k,
   };
+}
+
+/** 옛 결과를 흐리게 하고 상호작용을 끊는다. `begin` 의 `reset()` 이 실제로 지운다.
+ *
+ * 지우지 않고 흐리게만 하는 이유: 곧바로 비우면 화면이 한 번 텅 비었다가 다시
+ * 차서 오히려 덜컹인다. 남겨 두면 "여기 뭔가 있었다" 는 자리 감각이 이어진다.
+ */
+function markStale() {
+  const boxes = document.getElementById(OVERLAY_ID)?.querySelector("#mlr-boxes");
+  if (boxes) boxes.classList.add("mlr-stale");
 }
 
 /** 지금 화면에 보이는 박스인가.
@@ -1631,25 +1647,32 @@ document.addEventListener("keydown", (e) => {
 // ---------------------------------------------------------------------------
 
 /** 신호를 몰아서 한 번만 올린다. background 가 다시 debounce 하므로 여기서는 짧게. */
-const notifyMaybeChanged = throttle(() => {
+//: `fast` = 사람이 직접 넘긴 신호(클릭·방향키). DOM 변화와 달리 넘김이 거의
+//: 확실하므로 background 가 더 빨리, 그리고 오버레이를 숨긴 채로 확인한다.
+const notifyMaybeChanged = throttle((opts) => {
   // DOM 이 움직였으면 주소가 바뀌었을 수도 있다 (SPA 는 pushState 로 옮겨 다니는데
   // 그건 이벤트를 안 낸다). 자동 감지가 꺼져 있어도 이건 봐야 한다.
   onNavigated();
   if (!autoOn) return;
-  send({ type: "page-maybe-changed" });
+  send({ type: "page-maybe-changed", fast: Boolean(opts?.fast) });
 }, 250);
 
 function throttle(fn, ms) {
   let last = 0;
   let timer = null;
-  return () => {
+  let pending = null;
+  return (opts) => {
+    // 빠른 신호가 한 번이라도 섞였으면 빠른 쪽으로 올린다.
+    pending = { fast: Boolean(pending?.fast || opts?.fast) };
     const now = Date.now();
     const wait = Math.max(0, ms - (now - last));
     if (timer) return;
     timer = setTimeout(() => {
       timer = null;
       last = Date.now();
-      fn();
+      const o = pending;
+      pending = null;
+      fn(o);
     }, wait);
   };
 }
@@ -1700,7 +1723,7 @@ document.addEventListener(
   "click",
   (e) => {
     if (isOurs(e.target)) return;
-    notifyMaybeChanged();
+    notifyMaybeChanged({ fast: true });
   },
   true
 );
@@ -1712,13 +1735,14 @@ document.addEventListener(
   "keyup",
   (e) => {
     // 페이지 넘김에 쓰이는 키만. 아무 키나 잡으면 검색창 타이핑에도 반응한다.
+
     if (
       ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Space", "Enter"].includes(
         e.code === "Space" ? "Space" : e.key
       ) ||
       e.code === "Space"
     ) {
-      notifyMaybeChanged();
+      notifyMaybeChanged({ fast: true });
     }
   },
   true

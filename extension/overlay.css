@@ -436,3 +436,22 @@
 #mlr-panel:hover {
   opacity: 1;
 }
+
+/* 페이지가 바뀐 것이 확인됐지만 새 박스가 아직 안 온 상태.
+   지우지 않고 흐리게만 둔다 — 곧바로 비우면 화면이 텅 비었다가 다시 차서 오히려
+   덜컹인다. 남겨 두면 "여기 뭔가 있었다" 는 자리 감각이 이어진다. */
+#mlr-boxes.mlr-stale {
+  opacity: 0.18;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+/* 새 박스는 스며들 듯 나타난다. 툭 튀어나오면 넘길 때마다 눈이 끌린다. */
+#mlr-boxes .mlr-box {
+  animation: mlr-fade-in 0.18s ease-out;
+}
+
+@keyframes mlr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

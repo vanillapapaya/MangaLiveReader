@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   else if (msg?.type === "purge-page") purgePage(tab);
   else if (msg?.type === "page-maybe-changed") {
     // 워커가 죽었다 살아나도 `storage.session` 에서 상태를 되찾는다 (loadState).
-    schedule(tab);
+    schedule(tab, msg.fast);
   }
 });
 
@@ -160,6 +160,11 @@ const SETTLE_MS = 700;
 //: 페이지를 넘겨도 자동 번역이 안 걸린다.
 const SETTLE_MAX_MS = 2200;
 
+//: 사람이 직접 넘긴 신호(클릭·방향키)는 더 빨리 본다. DOM 변화와 달리 **넘김이
+//: 거의 확실**하고, 넘김 애니메이션은 보통 300ms 안에 끝난다. 기다리는 시간이 곧
+//: 새 그림 위에 옛 번역이 얹혀 있는 시간이다.
+const SETTLE_FAST_MS = 380;
+
 //: 자동으로는 이 간격보다 자주 읽지 않는다. 판정이 틀려도 API 를 쏟아붓지 않게
 //: 막는 마지막 방어선이다. 사람이 페이지를 이보다 빨리 넘기지도 않는다.
 const AUTO_MIN_INTERVAL_MS = 4000;
@@ -190,7 +195,7 @@ async function setAuto(tab, on) {
   chrome.tabs.sendMessage(tab.id, { type: "auto-state", on }).catch(() => {});
 }
 
-async function schedule(tab) {
+async function schedule(tab, fast = false) {
   const st = await loadState(tab.id);
   if (!st) return;
   const now = Date.now();
@@ -200,17 +205,17 @@ async function schedule(tab) {
   // `SETTLE_MAX_MS` 가 지나면 더 미루지 않는다.
   if (now - st.firstSignalAt >= SETTLE_MAX_MS) {
     st.firstSignalAt = 0;
-    check(tab);
+    check(tab, fast);
     return;
   }
   st.timer = setTimeout(() => {
     st.firstSignalAt = 0;
-    check(tab);
-  }, SETTLE_MS);
+    check(tab, fast);
+  }, fast ? SETTLE_FAST_MS : SETTLE_MS);
 }
 
 /** 캡처해서 해시가 달라졌을 때만 읽는다. */
-async function check(tab) {
+async function check(tab, fast = false) {
   const st = await loadState(tab.id);
   if (!st || st.busy) return;
   // **간격 제한에 걸렸다고 그냥 버리면 안 된다.** 페이지를 빨리 넘기면 그 넘김이
@@ -218,26 +223,46 @@ async function check(tab) {
   const wait = AUTO_MIN_INTERVAL_MS - (Date.now() - st.lastAt);
   if (wait > 0) {
     clearTimeout(st.timer);
-    st.timer = setTimeout(() => check(tab), wait + 50);
+    st.timer = setTimeout(() => check(tab, fast), wait + 50);
     return;
   }
   st.busy = true;
   try {
     // 자동 확인은 **지난 읽기와 같은 영역**을 잘라야 한다. 매번 뷰어를 다시 찾으면
     // 영역이 흔들려 해시가 달라지고, 같은 페이지를 계속 다시 번역한다.
-    // 오버레이는 숨기지 않는다 (위 `keepOverlay` 주석 — 깜빡임의 원인이다).
-    const prepared = await prepare(tab, null, true, true);
+    //
+    // **오버레이를 숨길지는 신호의 성격에 따라 다르다.**
+    //
+    //   DOM 변화(`fast=false`) — 광고·애니메이션이라 넘김이 아닐 때가 대부분이다.
+    //     숨겼다 되살리면 가만히 있는데도 화면이 깜빡인다. 숨기지 않는다.
+    //   사람이 넘김(`fast=true`) — 클릭·방향키. 넘김이 거의 확실하다. 숨기면
+    //     ① 옛 번역이 새 그림 위에 얹혀 있는 시간이 사라지고
+    //     ② 바뀌었을 때 이 캡처를 **그대로 읽기에 넘겨** 캡처를 한 번 아낀다
+    //        (읽기가 150-200ms 빨라진다).
+    //     깜빡임은 넘김 동작에 묻힌다.
+    const prepared = await prepare(tab, null, true, !fast);
     // 바뀌었든 아니든 확인한 시각을 남긴다. 안 그러면 "안 바뀜" 이 이어질 때
     // 확인이 몰려 캡처가 잦아진다.
     st.lastAt = Date.now();
 
-    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) return; // 같은 화면
+    if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) {
+      // 같은 화면이다. 숨겼다면 되돌린다.
+      if (fast) await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
+      return;
+    }
 
     st.lastHash = prepared.ahash;
     saveState(tab.id, st);
-    // **여기서는 캡처를 재사용하지 않는다.** 오버레이가 찍혀 있어 OCR 에 못 쓴다.
-    // 다시 읽는 순간은 어차피 번역에 몇 초를 쓰므로 캡처 한 번이 아깝지 않다.
-    await run(tab);
+    if (fast) {
+      // 오버레이 없이 찍은 캡처다. 그대로 읽기에 넘긴다 — 캡처를 한 번 아끼고,
+      // 화면에는 이미 옛 박스가 사라진 상태라 새 그림만 보인다.
+      await run(tab, null, prepared);
+    } else {
+      // 오버레이가 찍혀 있어 OCR 에 못 쓴다. 새로 찍어야 하는데 그동안 옛 번역이
+      // 새 그림 위에 얹혀 있으므로, 먼저 흐리게 해 둔다.
+      chrome.tabs.sendMessage(tab.id, { type: "stale" }).catch(() => {});
+      await run(tab);
+    }
   } catch {
     // 탭이 닫혔거나 캡처가 막혔다. 다음 신호에서 다시 해 본다.
     await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
