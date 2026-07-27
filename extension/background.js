@@ -158,14 +158,18 @@ async function check(tab) {
   if (Date.now() - st.lastAt < AUTO_MIN_INTERVAL_MS) return;
   st.busy = true;
   try {
-    const prepared = await prepare(tab, null);
+    // 자동 확인은 **지난 읽기와 같은 영역**을 잘라야 한다. 매번 뷰어를 다시 찾으면
+    // 영역이 흔들려 해시가 달라지고, 같은 페이지를 계속 다시 번역한다.
+    const prepared = await prepare(tab, null, true);
+    // 바뀌었든 아니든 확인한 시각을 남긴다. 안 그러면 "안 바뀜" 이 이어질 때
+    // 확인이 몰려 캡처가 잦아지고 화면이 깜빡인다.
+    st.lastAt = Date.now();
     if (hamming(prepared.ahash, st.lastHash) <= AHASH_SAME_MAX) {
       // 같은 화면이다. 오버레이를 되살리고 조용히 끝낸다.
       await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
       return;
     }
     st.lastHash = prepared.ahash;
-    st.lastAt = Date.now();
     saveState(tab.id, st);
     await run(tab, null, prepared);
   } catch {
@@ -211,13 +215,14 @@ async function purgeAll(tab) {
  *
  *  @param override 뷰어 자동 탐지 대신 쓸 사각형. 없으면 probe 한다.
  */
-async function prepare(tab, override = null) {
+async function prepare(tab, override = null, stable = false) {
   // 1. 뷰어 요소의 CSS 사각형을 콘텐츠 스크립트에서 받는다.
   //    **OS 캡처 경로에는 없는 정보다.** 화면 좌표를 추측하는 대신 DOM 이
   //    "만화가 여기 있다" 고 알려준다.
   //    자동 탐지는 기하 휴리스틱이라 반드시 틀리는 사이트가 나온다. 그때
   //    Alt+Shift+D 로 손수 집은 사각형이 override 로 들어온다.
-  const probe = override ?? (await chrome.tabs.sendMessage(tab.id, { type: "probe" }));
+  const probe =
+    override ?? (await chrome.tabs.sendMessage(tab.id, { type: stable ? "probe-stable" : "probe" }));
   if (probe?.error) throw new Error("probe 실패: " + probe.error);
   if (!probe?.rect) throw new Error("뷰어로 볼 만한 요소를 못 찾았다");
 

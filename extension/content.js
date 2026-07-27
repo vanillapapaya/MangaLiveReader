@@ -75,6 +75,29 @@ function send(msg) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg.type) {
+    case "probe-stable":
+      // **자동 감지 전용.** 뷰어를 다시 찾지 않고 지난 읽기에서 본 요소를 그대로 쓴다.
+      //
+      // `probeViewer()` 는 매번 기하 휴리스틱을 새로 돌리는데, 캐러셀이 움직이거나
+      // 타일이 늦게 뜨면 **고르는 요소가 달라진다.** 그러면 잘라 보내는 영역이 달라져
+      // 해시가 흔들리고, 같은 페이지인데도 "바뀌었다" 로 판정해 통째로 다시 번역한다.
+      // 실측 로그에서 같은 페이지가 70초 동안 8번 새로 번역됐다 (region 수가
+      // 4·5·6·7·8·11 로 널뛴 것이 영역이 달라졌다는 증거다).
+      try {
+        const live = viewerEls.filter((el) => el.isConnected);
+        if (live.length) {
+          const u = unionRects(live.map((el) => el.getBoundingClientRect()));
+          const rect = clampToViewport(u, window.innerWidth, window.innerHeight);
+          if (rect.width > 50 && rect.height > 50) {
+            sendResponse({ rect, tag: "고정", dpr: dpr(), count: live.length });
+            return true;
+          }
+        }
+        sendResponse(probeViewer()); // 요소가 사라졌으면 새로 찾는다
+      } catch (err) {
+        sendResponse({ error: String(err?.stack || err) });
+      }
+      return true;
     case "probe":
       // 여기서 예외가 나면 background 는 undefined 를 받고 "요소를 못 찾았다" 로
       // 오해한다. 진짜 원인을 넘겨서 상태 표시줄에 그대로 뜨게 한다.
