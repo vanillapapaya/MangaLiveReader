@@ -58,6 +58,33 @@ document.getElementById("loadvoices").addEventListener("click", async () => {
   }
 });
 
+/** 호스트 목록 → 권한 패턴.
+ *
+ * **자동 실행에는 사이트 권한이 반드시 필요하다.** `chrome.tabs.captureVisibleTab`
+ * 은 `activeTab` 이나 그 사이트의 host permission 이 있어야 하는데, `activeTab` 은
+ * **사용자가 확장을 직접 실행할 때만** 주어진다 (아이콘 클릭·단축키). 자동으로
+ * 켜지면 그게 없어 캡처가 막히고, 그때마다 손으로 한 번 눌러야 한다.
+ */
+function sitePatterns(text) {
+  return [
+    ...new Set(
+      text
+        .split(/[\n,]/)
+        // `https://yanmaga.jp/x` 처럼 붙여 넣어도 호스트만 뽑는다.
+        .map((x) =>
+          x
+            .trim()
+            .toLowerCase()
+            .replace(/^[a-z]+:\/\//, "")
+            .replace(/^\*?\.?/, "")
+            .replace(/[/:?#].*$/, "")
+        )
+        .filter((h) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(h))
+        .flatMap((h) => [`*://${h}/*`, `*://*.${h}/*`])
+    ),
+  ];
+}
+
 /** 주소의 출처(origin) 만 뽑는다. 권한은 출처 단위로 준다. */
 function originPattern(u) {
   try {
@@ -99,6 +126,15 @@ document.getElementById("save").addEventListener("click", async () => {
     saved.textContent = `${ttsPattern} 권한이 없다 — 음성 서버를 못 쓴다`;
     saved.style.color = "#c33";
     return;
+  }
+
+  // 자동으로 켜질 사이트는 캡처 권한이 필요하다 (위 `sitePatterns` 주석).
+  const sites = sitePatterns(autosites.value);
+  if (sites.length && !(await chrome.permissions.request({ origins: sites }))) {
+    saved.hidden = false;
+    saved.textContent = "사이트 권한을 거부했다 — 자동 실행이 안 된다 (직접 Alt+Shift+M 은 됨)";
+    saved.style.color = "#c33";
+    // 설정 자체는 저장한다. 권한은 나중에 다시 받을 수 있다.
   }
 
   await chrome.storage.sync.set({

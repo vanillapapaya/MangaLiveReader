@@ -1037,8 +1037,9 @@ let currentUtterance = null;
 // 제일 나쁘다.
 // ---------------------------------------------------------------------------
 
-/** 지금 재생 중인 오디오. 멈출 때 필요하다. */
-let audioEl = null;
+/** 지금 재생 중인 소리. 멈출 때 필요하다. */
+let audioSrc = null;
+let audioCtx = null;
 
 /** 서버에 합성을 시켜 data URL 을 받는다. 실패하면 null (내장 음성으로 떨어진다).
  *
@@ -1052,9 +1053,9 @@ async function ttsFetch(text, lang) {
   if (stale || !alive()) return null;
   try {
     const r = await chrome.runtime.sendMessage({ type: "tts", text, lang });
-    if (r?.url) {
+    if (r?.b64) {
       ttsLastError = null;
-      return r.url;
+      return r.b64;
     }
     ttsLastError = r?.error ?? "음성 서버 주소가 비어 있다 (확장 옵션에서 설정)";
   } catch (err) {
@@ -1063,25 +1064,40 @@ async function ttsFetch(text, lang) {
   return null;
 }
 
-/** data URL 을 재생한다. **재생됐으면 true, 못 했으면 false.**
+/** base64 오디오를 재생한다. **재생됐으면 true, 못 했으면 false.**
  *
- * 예전에는 `a.play().catch(done)` 로 실패를 조용히 삼켰다. 그러면 브라우저가
- * 자동재생을 막았을 때 **소리도 안 나고 이유도 안 보인다** — 서버 합성은 성공했는데
- * 재생만 막힌 경우가 정확히 그랬다. 이제 false 를 돌려 내장 음성으로 떨어진다.
+ * **`new Audio(dataUrl)` 을 쓰지 않는다.** 그건 리소스 로드라 **페이지의 CSP
+ * (media-src)** 를 타는데, 만화 사이트는 CSP 가 빡빡해서 `data:` 오디오가 막힌다 —
+ * `onerror` 만 나고 "오디오를 못 읽었다" 로 끝났다.
+ *
+ * Web Audio 는 스크립트로 디코드·재생하므로 CSP 를 타지 않는다.
  */
-function playAudio(url) {
-  return new Promise((resolve) => {
-    const a = new Audio(url);
-    audioEl = a;
-    const done = (ok, why) => {
-      if (audioEl === a) audioEl = null;
-      if (!ok && why) ttsLastError = `재생 실패: ${why}`;
-      resolve(ok);
-    };
-    a.onended = () => done(true);
-    a.onerror = () => done(false, "오디오를 못 읽었다");
-    a.play().catch((err) => done(false, String(err?.name || err)));
-  });
+async function playAudio(b64) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 사용자 제스처 없이 만들어졌으면 멈춰 있다. 버튼을 누른 흐름이라 풀린다.
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const buf = await audioCtx.decodeAudioData(bytes.buffer);
+
+    return await new Promise((resolve) => {
+      const src = audioCtx.createBufferSource();
+      audioSrc = src;
+      src.buffer = buf;
+      src.connect(audioCtx.destination);
+      src.onended = () => {
+        if (audioSrc === src) audioSrc = null;
+        resolve(true);
+      };
+      src.start();
+    });
+  } catch (err) {
+    ttsLastError = `재생 실패: ${String(err?.name || err?.message || err)}`;
+    return false;
+  }
 }
 
 /** 한 마디 말한다. 끝나면(또는 실패하면) resolve. 실패 이유는 상태줄에 남긴다. */
@@ -1202,9 +1218,14 @@ async function speakAll() {
 function stopSpeaking() {
   speaking = false;
   currentUtterance = null;
-  if (audioEl) {
-    audioEl.pause();
-    audioEl = null;
+  if (audioSrc) {
+    try {
+      audioSrc.onended = null;
+      audioSrc.stop();
+    } catch {
+      /* 이미 끝났으면 던진다 */
+    }
+    audioSrc = null;
   }
   speechSynthesis.cancel();
   document
@@ -1809,7 +1830,9 @@ async function maybeAutoEnable() {
   }
   if (!probe?.count) return;
 
-  send({ type: "set-auto", on: true });
+  // `silent` — 권한이 없어도 떠들지 않는다. 자동은 거들 뿐이고, 손으로 켜거나
+  // Alt+Shift+M 을 누르면 그때 안내가 나간다.
+  send({ type: "set-auto", on: true, silent: true });
 }
 
 // 뷰어는 대개 늦게 그려진다. 몇 번 나눠 본다 — 첫 시도에 없다고 포기하면

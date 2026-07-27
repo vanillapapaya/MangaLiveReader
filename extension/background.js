@@ -43,8 +43,15 @@ const DEFAULTS = {
 // TTS 서버에 CORS 헤더를 붙여야 한다. 여기서 부르면 확장 출처라 그럴 필요가 없다
 // (`/read` 와 같은 이유).
 //
-// 오디오는 data URL 로 돌려준다. Blob URL 은 이 워커의 수명에 묶이는데 MV3 워커는
-// 30초 유휴로 죽으므로, 재생 도중 URL 이 무효가 된다.
+// 오디오는 **base64 바이트**로 돌려준다.
+//
+//   Blob URL — 이 워커의 수명에 묶이는데 MV3 워커는 30초 유휴로 죽는다.
+//   data URL — `new Audio(url)` 은 **페이지의 CSP(media-src)** 를 탄다. 만화
+//     사이트는 CSP 가 빡빡해서 `data:` 오디오가 막히고, `onerror` 로 "오디오를 못
+//     읽었다" 만 남는다. 실제로 그 증상이 났다.
+//
+// 콘텐츠 스크립트가 Web Audio 로 디코드해 재생한다 — 리소스 로드가 아니라 스크립트라
+// CSP 를 타지 않는다.
 // ---------------------------------------------------------------------------
 
 async function ttsVoices() {
@@ -77,7 +84,7 @@ async function ttsSpeak(text, lang) {
   for (let i = 0; i < b.length; i += 0x8000) {
     bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
   }
-  return `data:${resp.headers.get("content-type") || "audio/wav"};base64,${btoa(bin)}`;
+  return btoa(bin);
 }
 
 async function settings() {
@@ -142,13 +149,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
   }
   else if (msg?.type === "do-read") run(tab, null, null, { refresh: Boolean(msg.refresh) });
-  else if (msg?.type === "set-auto") setAuto(tab, msg.on);
+  else if (msg?.type === "set-auto") setAuto(tab, msg.on, msg.silent);
   else if (msg?.type === "purge-all") purgeCache(tab, { all: true });
   else if (msg?.type === "purge-page") purgePage(tab);
   else if (msg?.type === "tts") {
     // 콘텐츠 스크립트가 기다리므로 반드시 답해야 한다 (실패해도 null 로).
     ttsSpeak(msg.text, msg.lang)
-      .then((url) => sendResponse({ url }))
+      .then((b64) => sendResponse({ b64 }))
       .catch((err) => sendResponse({ error: String(err.message || err) }));
     return true; // 비동기 응답
   }
@@ -275,8 +282,21 @@ function hamming(a, b) {
   return d;
 }
 
-async function setAuto(tab, on) {
+async function setAuto(tab, on, silent = false) {
   if (on) {
+    // **캡처 권한이 없으면 켜 봐야 헛돈다.** `activeTab` 은 사용자가 직접 실행할
+    // 때만 주어지므로, 자동으로 켜려면 그 사이트의 host permission 이 있어야 한다.
+    try {
+      const origin = new URL(tab.url).origin + "/*";
+      if (!(await chrome.permissions.contains({ origins: [origin] }))) {
+        if (!silent) {
+          tell(tab, "이 사이트 권한이 없어 자동을 못 켠다 — 확장 옵션에서 「저장」 을 눌러 허용할 것", true);
+        }
+        return;
+      }
+    } catch {
+      return;
+    }
     const st = (await loadState(tab.id)) ?? { lastHash: null, lastAt: 0, timer: null, busy: false };
     watching.set(tab.id, st);
     saveState(tab.id, st);
