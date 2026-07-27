@@ -2,16 +2,57 @@
 const DEFAULTS = {
   serviceUrl: "http://127.0.0.1:8788/read",
   authToken: "",
+  ttsUrl: "",
+  ttsVoice: "",
 };
 
 const url = document.getElementById("url");
 const token = document.getElementById("token");
 const saved = document.getElementById("saved");
+const ttsurl = document.getElementById("ttsurl");
+const ttsvoice = document.getElementById("ttsvoice");
+const voicemsg = document.getElementById("voicemsg");
 
 chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   const v = { ...DEFAULTS, ...got };
   url.value = v.serviceUrl;
   token.value = v.authToken;
+  ttsurl.value = v.ttsUrl;
+  if (v.ttsVoice) {
+    // 목록을 아직 안 받았어도 저장된 값은 보여 준다.
+    ttsvoice.add(new Option(v.ttsVoice, v.ttsVoice, true, true));
+  }
+});
+
+// 음성 서버에서 목소리 목록을 받아 채운다.
+document.getElementById("loadvoices").addEventListener("click", async () => {
+  const base = ttsurl.value.trim();
+  if (!base) {
+    voicemsg.textContent = "주소를 먼저 넣을 것";
+    return;
+  }
+  // **권한을 먼저 받는다.** `/read` 와 같은 이유 — 없으면 fetch 가 CORS 로 막힌다.
+  // `await` 앞에 두면 사용자 제스처가 끊기므로 request 를 바로 부른다.
+  const pattern = originPattern(base);
+  if (pattern && !(await chrome.permissions.request({ origins: [pattern] }))) {
+    voicemsg.textContent = `${pattern} 권한이 없다`;
+    return;
+  }
+  voicemsg.textContent = "불러오는 중…";
+  try {
+    const resp = await fetch(new URL("/voices", base).href);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const cur = ttsvoice.value;
+    ttsvoice.innerHTML = '<option value="">(서버 기본값)</option>';
+    for (const name of data.voices ?? []) {
+      const desc = data.info?.[name]?.description;
+      ttsvoice.add(new Option(desc ? `${name} — ${desc}` : name, name, false, name === cur));
+    }
+    voicemsg.textContent = `${(data.voices ?? []).length}개`;
+  } catch (err) {
+    voicemsg.textContent = `실패: ${err.message}`;
+  }
 });
 
 /** 주소의 출처(origin) 만 뽑는다. 권한은 출처 단위로 준다. */
@@ -47,7 +88,22 @@ document.getElementById("save").addEventListener("click", async () => {
     }
   }
 
-  await chrome.storage.sync.set({ serviceUrl: value, authToken: token.value.trim() });
+  // 음성 서버도 다른 출처라 권한이 필요하다.
+  const tts = ttsurl.value.trim();
+  const ttsPattern = tts ? originPattern(tts) : null;
+  if (ttsPattern && !(await chrome.permissions.request({ origins: [ttsPattern] }))) {
+    saved.hidden = false;
+    saved.textContent = `${ttsPattern} 권한이 없다 — 음성 서버를 못 쓴다`;
+    saved.style.color = "#c33";
+    return;
+  }
+
+  await chrome.storage.sync.set({
+    serviceUrl: value,
+    authToken: token.value.trim(),
+    ttsUrl: tts,
+    ttsVoice: ttsvoice.value,
+  });
   saved.hidden = false;
   saved.textContent = "저장했다";
   saved.style.color = "";

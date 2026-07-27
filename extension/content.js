@@ -1024,6 +1024,48 @@ function hasSpeech(box) {
 //: 같은 부류다 (DEVLOG.md).
 let currentUtterance = null;
 
+// ---------------------------------------------------------------------------
+// 서버 음성 (GPT-SoVITS)
+//
+// 브라우저 내장 음성은 어디서나 되지만 기계음이다. 학습된 목소리로 원문을 들으면
+// 일본어 듣기용으로 값어치가 다르다.
+//
+// **실측 RTF 0.25** — 40자 대사가 1.9초 합성에 7.6초 재생이다. 재생이 합성보다
+// 4배 느리므로, 지금 재생하는 동안 다음 것을 미리 합성해 두면 끊기지 않는다.
+//
+// 서버가 없거나 실패하면 조용히 내장 음성으로 떨어진다 — 소리가 아예 안 나는 것이
+// 제일 나쁘다.
+// ---------------------------------------------------------------------------
+
+/** 지금 재생 중인 오디오. 멈출 때 필요하다. */
+let audioEl = null;
+
+/** 서버에 합성을 시켜 data URL 을 받는다. 실패하면 null. */
+async function ttsFetch(text, lang) {
+  if (stale || !alive()) return null;
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "tts", text, lang });
+    return r?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** data URL 을 재생한다. 끝나거나 실패하면 resolve. */
+function playAudio(url) {
+  return new Promise((resolve) => {
+    const a = new Audio(url);
+    audioEl = a;
+    const done = () => {
+      if (audioEl === a) audioEl = null;
+      resolve();
+    };
+    a.onended = done;
+    a.onerror = done;
+    a.play().catch(done); // 자동재생이 막히면 조용히 넘어간다
+  });
+}
+
 /** 한 마디 말한다. 끝나면(또는 실패하면) resolve. 실패 이유는 상태줄에 남긴다. */
 function say(text, lang, voice) {
   return new Promise((resolve) => {
@@ -1061,6 +1103,11 @@ async function speakOne(box) {
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const { text, lang, voice, fellBack } = await resolveSpeech(box);
   if (!text) return;
+  const url = await ttsFetch(text, lang);
+  if (url) {
+    await playAudio(url);
+    return;
+  }
   if (fellBack) status(await noJapaneseReason());
   else if (!voice) {
     const n = (await loadVoices()).length;
@@ -1085,26 +1132,45 @@ async function speakAll() {
   syncPanel();
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
 
+  // 서버 음성을 쓸 수 있는지 첫 문장으로 알아본다.
   const first = await resolveSpeech(boxes[0]);
+  let firstUrl = await ttsFetch(first.text, first.lang);
+  const useServer = firstUrl !== null;
   status(
-    first.fellBack
-      ? await noJapaneseReason()
-      : first.voice
-        ? `음성: ${first.voice.name}`
-        : "맞는 음성이 없어 기본 음성으로 읽는다"
+    useServer
+      ? "음성: 서버 (GPT-SoVITS)"
+      : first.fellBack
+        ? await noJapaneseReason()
+        : first.voice
+          ? `음성: ${first.voice.name}`
+          : "맞는 음성이 없어 기본 음성으로 읽는다"
   );
 
+  // **다음 것을 미리 합성해 둔다.** 재생이 합성보다 4배 느리므로 한 칸만 앞서면
+  // 충분하다. 이게 없으면 말풍선마다 1-2초씩 끊긴다.
+  // `ready` 는 **지금 재생할** 오디오다. 재생을 시작하기 전에 다음 것의 합성을
+  // 걸어 두고, 재생이 끝나면 그것을 받아 다음 차례로 넘긴다. 한 칸만 앞서면
+  // 충분하다 — 재생이 합성보다 4배 느리다.
+  let ready = firstUrl;
   for (let i = 0; i < boxes.length && speaking; i++) {
     const box = boxes[i];
-    const { text, lang, voice } = await resolveSpeech(box);
-    if (!text) continue;
+    const cur = await resolveSpeech(box);
+
+    const ahead =
+      useServer && i + 1 < boxes.length
+        ? resolveSpeech(boxes[i + 1]).then((nx) => (nx.text ? ttsFetch(nx.text, nx.lang) : null))
+        : Promise.resolve(null);
+
     box.classList.add("mlr-speaking");
     status(`읽는 중 ${i + 1}/${boxes.length}`);
     try {
-      await say(text, lang, voice);
+      if (ready) await playAudio(ready);
+      else if (cur.text) await say(cur.text, cur.lang, cur.voice);
     } finally {
       box.classList.remove("mlr-speaking");
     }
+    // **미리 받은 것과 다음 박스가 어긋나면 안 된다.** 여기서 한 칸씩 같이 민다.
+    ready = await ahead;
   }
 
   speaking = false;
@@ -1115,6 +1181,10 @@ async function speakAll() {
 function stopSpeaking() {
   speaking = false;
   currentUtterance = null;
+  if (audioEl) {
+    audioEl.pause();
+    audioEl = null;
+  }
   speechSynthesis.cancel();
   document
     .querySelectorAll(".mlr-box.mlr-speaking")

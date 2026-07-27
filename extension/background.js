@@ -20,7 +20,54 @@
 const DEFAULTS = {
   serviceUrl: "http://127.0.0.1:8788/read",
   authToken: "", // service.toml 의 auth_disabled = false 로 바꾸면 채운다
+  // 음성 합성 서버 (GPT-SoVITS). 비우면 브라우저 내장 음성을 쓴다.
+  ttsUrl: "",
+  ttsVoice: "",
 };
+
+// ---------------------------------------------------------------------------
+// 음성 합성 중계
+//
+// **콘텐츠 스크립트가 직접 부르지 않는다.** 그러면 페이지 출처로 요청이 나가
+// TTS 서버에 CORS 헤더를 붙여야 한다. 여기서 부르면 확장 출처라 그럴 필요가 없다
+// (`/read` 와 같은 이유).
+//
+// 오디오는 data URL 로 돌려준다. Blob URL 은 이 워커의 수명에 묶이는데 MV3 워커는
+// 30초 유휴로 죽으므로, 재생 도중 URL 이 무효가 된다.
+// ---------------------------------------------------------------------------
+
+async function ttsVoices() {
+  const { ttsUrl } = await settings();
+  if (!ttsUrl) return null;
+  const resp = await fetch(new URL("/voices", ttsUrl).href, { signal: AbortSignal.timeout(8000) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function ttsSpeak(text, lang) {
+  const { ttsUrl, ttsVoice } = await settings();
+  if (!ttsUrl || !text) return null;
+  const resp = await fetch(new URL("/tts", ttsUrl).href, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      language: lang === "ko-KR" ? "Korean" : "Japanese",
+      ...(ttsVoice ? { voice: ttsVoice } : {}),
+    }),
+    // 40자 대사가 2초, 넉넉히 잡아도 이 안에 끝난다. 넘으면 내장 음성으로 떨어진다.
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const buf = await resp.arrayBuffer();
+  let bin = "";
+  const b = new Uint8Array(buf);
+  // btoa 는 문자열을 받는다. 한 번에 넘기면 인자 개수 제한에 걸리므로 나눠 붙인다.
+  for (let i = 0; i < b.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  }
+  return `data:${resp.headers.get("content-type") || "audio/wav"};base64,${btoa(bin)}`;
+}
 
 async function settings() {
   return { ...DEFAULTS, ...(await chrome.storage.sync.get(Object.keys(DEFAULTS))) };
@@ -64,6 +111,19 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   else if (msg?.type === "set-auto") setAuto(tab, msg.on);
   else if (msg?.type === "purge-all") purgeCache(tab, { all: true });
   else if (msg?.type === "purge-page") purgePage(tab);
+  else if (msg?.type === "tts") {
+    // 콘텐츠 스크립트가 기다리므로 반드시 답해야 한다 (실패해도 null 로).
+    ttsSpeak(msg.text, msg.lang)
+      .then((url) => sendResponse({ url }))
+      .catch((err) => sendResponse({ error: String(err.message || err) }));
+    return true; // 비동기 응답
+  }
+  else if (msg?.type === "tts-voices") {
+    ttsVoices()
+      .then((v) => sendResponse({ voices: v }))
+      .catch((err) => sendResponse({ error: String(err.message || err) }));
+    return true;
+  }
   else if (msg?.type === "page-maybe-changed") {
     // 워커가 죽었다 살아나도 `storage.session` 에서 상태를 되찾는다 (loadState).
     schedule(tab, msg.fast);

@@ -39,6 +39,26 @@
   <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
 </p>
 
+<h2 style="margin-top:32px;font-size:15px">음성 (선택)</h2>
+<p class="hint">
+  GPT-SoVITS 같은 음성 서버가 있으면 주소를 넣는다. 비우면 브라우저 내장 음성을 쓴다.
+  <br />학습된 목소리로 <b>원문(일본어)</b> 을 읽어 준다 — 눈은 한국어, 귀는 일본어.
+</p>
+
+<label for="ttsurl">음성 서버 주소</label>
+<input id="ttsurl" type="url" spellcheck="false" placeholder="예: http://100.x.x.x:9880" />
+
+<label for="ttsvoice">목소리</label>
+<select id="ttsvoice" style="width:100%;padding:6px 8px;margin-top:4px;font:inherit">
+  <option value="">(서버 기본값)</option>
+</select>
+<p class="hint">
+  <button id="loadvoices" type="button" style="margin-top:6px;padding:4px 10px;font:inherit">
+    목록 불러오기
+  </button>
+  <span id="voicemsg"></span>
+</p>
+
 <button id="save">저장</button><span id="saved" hidden>저장했다</span>
 
 <h2 style="margin-top:32px;font-size:15px">캐시</h2>
