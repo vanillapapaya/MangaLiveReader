@@ -40,6 +40,8 @@ chrome.commands.onCommand.addListener((cmd, tab) => {
   // **여기서 응답을 기다리지 않는다** — 드래그는 몇 초가 걸릴 수 있고 MV3
   // 서비스 워커는 응답 대기 중에도 30초 유휴로 죽을 수 있다.
   if (cmd === "select-region") chrome.tabs.sendMessage(tab.id, { type: "select-region" }).catch(() => {});
+  // 「갱신」 — 이 페이지의 낡은 캐시를 지우고 다시 읽는다. 결과가 이상할 때 쓴다.
+  if (cmd === "refresh-page") run(tab, null, null, { refresh: true });
 });
 
 chrome.runtime.onMessage.addListener((msg, sender) => {

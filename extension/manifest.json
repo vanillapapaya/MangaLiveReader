@@ -41,6 +41,10 @@
     "select-region": {
       "suggested_key": { "default": "Alt+Shift+D" },
       "description": "읽을 영역을 드래그로 고른다 (자동 탐지 실패용)"
+    },
+    "refresh-page": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "이 페이지의 캐시를 지우고 다시 번역한다"
     }
   },
 

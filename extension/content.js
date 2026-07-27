@@ -421,12 +421,12 @@ function cancelSelection() {
 // **자주 쓰는 셋만 보이고 나머지는 「⋯」 안에 접는다.**
 const PANEL_HTML = `
 <div id="mlr-panel">
-  <button data-act="read"   title="이 페이지를 캡처해 번역한다 (Alt+Shift+M)">번역</button>
+  <button data-act="read"   title="이 페이지를 캡처해 번역한다 (Alt+Shift+M)&#10;Shift+클릭 = 캐시 지우고 다시 (Alt+Shift+R)">번역</button>
   <button data-act="select" title="읽을 영역을 드래그로 고르기 (Alt+Shift+D)">영역</button>
   <button data-act="auto"   title="페이지가 넘어가면 자동으로 읽는다">자동</button>
   <button data-act="more"   title="나머지 기능" class="mlr-more">⋯</button>
   <div class="mlr-rest" hidden>
-    <button data-act="fresh"  title="이 페이지의 캐시를 지우고 다시 번역한다">갱신</button>
+    <button data-act="fresh"  title="이 페이지의 캐시를 지우고 다시 번역한다 (Alt+Shift+R)">갱신</button>
     <button data-act="speak"  title="원문을 읽기 순서대로 소리내어 읽는다">음성</button>
     <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
     <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
@@ -470,7 +470,9 @@ function bindPanel(root) {
     e.stopPropagation();
     switch (act) {
       case "read":
-        send({ type: "do-read" });
+        // Shift 를 누른 채 「번역」 = 「갱신」. 갱신은 「⋯」 안에 접혀 있어서
+        // 손이 잘 안 가는데, 결과가 이상할 때 바로 필요한 것이 그거다.
+        send({ type: "do-read", refresh: e.shiftKey });
         break;
       case "fresh":
         // 「번역」은 캐시를 쓴다(같은 페이지면 공짜·같은 문장). 결과가 이상할 때만
