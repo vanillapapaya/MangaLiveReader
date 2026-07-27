@@ -121,15 +121,46 @@ const MAX_SHORT_SIDE = 1600;
 const MAX_LONG_SIDE = 2600;
 const JPEG_QUALITY = 0.88;
 
-chrome.action.onClicked.addListener((tab) => run(tab));
+/** 이 탭의 호스트 권한을 확보한다. **사용자 제스처가 살아 있을 때만 부를 것.**
+ *
+ * `chrome.tabs.captureVisibleTab` 은 `activeTab` 이나 그 사이트의 host permission
+ * 이 필요하다. `activeTab` 은 **사용자가 확장을 직접 실행한 그 순간**에만 주어져서,
+ * 자동 감지처럼 나중에 도는 코드에는 없다 — 그래서 매번 손으로 한 번 눌러야 했다.
+ *
+ * 아이콘 클릭·단축키는 제스처 문맥이므로 **여기서 바로 요청한다.** 한 번 허용하면
+ * 그 뒤로는 자동도 된다.
+ *
+ * **`await` 를 앞에 두지 않는다** — `permissions.contains()` 로 미리 확인하고
+ * 싶어지지만, 그 await 가 제스처를 끊어 팝업이 안 뜬다. 이미 있는 권한을 다시
+ * 요청하면 팝업 없이 곧바로 true 다.
+ */
+function ensureHost(tab) {
+  let origin;
+  try {
+    const u = new URL(tab.url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return Promise.resolve(true);
+    origin = `${u.protocol}//${u.hostname}/*`;
+  } catch {
+    return Promise.resolve(true); // 주소를 못 읽으면 그냥 진행한다
+  }
+  return chrome.permissions.request({ origins: [origin] }).catch(() => false);
+}
+
+chrome.action.onClicked.addListener((tab) => {
+  ensureHost(tab).then(() => run(tab));
+});
 chrome.commands.onCommand.addListener((cmd, tab) => {
-  if (cmd === "read-page") run(tab);
+  if (cmd === "read-page") ensureHost(tab).then(() => run(tab));
   // 드래그 UI 는 콘텐츠 스크립트가 띄운다. 다 고르면 "read-rect" 로 되돌아온다.
   // **여기서 응답을 기다리지 않는다** — 드래그는 몇 초가 걸릴 수 있고 MV3
   // 서비스 워커는 응답 대기 중에도 30초 유휴로 죽을 수 있다.
-  if (cmd === "select-region") chrome.tabs.sendMessage(tab.id, { type: "select-region" }).catch(() => {});
+  if (cmd === "select-region") {
+    ensureHost(tab).then(() =>
+      chrome.tabs.sendMessage(tab.id, { type: "select-region" }).catch(() => {})
+    );
+  }
   // 「갱신」 — 이 페이지의 낡은 캐시를 지우고 다시 읽는다. 결과가 이상할 때 쓴다.
-  if (cmd === "refresh-page") run(tab, null, null, { refresh: true });
+  if (cmd === "refresh-page") ensureHost(tab).then(() => run(tab, null, null, { refresh: true }));
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -493,7 +524,18 @@ async function prepare(tab, override = null, stable = false, keepOverlay = false
   //    찍히므로 판정에는 지장이 없다 — 아래 만화가 바뀌어야 해시가 달라진다.
   //    진짜로 읽을 때는 당연히 숨긴다 (박스가 찍히면 검출기가 글자로 읽는다).
   if (!keepOverlay) await chrome.tabs.sendMessage(tab.id, { type: "hide-overlay" });
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  let dataUrl;
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  } catch (err) {
+    // 십중팔구 권한 문제다. 짐작하지 말고 그대로 보여 준다.
+    const m = String(err?.message || err);
+    throw new Error(
+      /permission|access/i.test(m)
+        ? `화면을 못 찍었다 — 이 사이트 권한이 없다. Alt+Shift+M 을 눌러 허용할 것 (${m})`
+        : `화면을 못 찍었다: ${m}`
+    );
+  }
 
   // 3. 뷰어 영역만 잘라 §5.4 규격으로 정규화한다.
   const { blob, scale, ahash } = await cropAndNormalize(dataUrl, probe.rect, probe.dpr);
