@@ -225,6 +225,12 @@
   border-top: 1px solid rgba(255, 255, 255, 0.18);
 }
 
+/* **이 줄이 없으면 안 접힌다.** `hidden` 속성은 UA 스타일시트의
+   `display: none` 일 뿐이라, 위의 `display: flex` 가 이겨 버린다. */
+#mlr-panel .mlr-rest[hidden] {
+  display: none;
+}
+
 #mlr-panel .mlr-more {
   color: #8a8a90;
   padding: 2px 10px;

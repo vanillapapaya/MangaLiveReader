@@ -118,7 +118,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // 읽어줘" 지 "나머지는 버려" 가 아니다. 예전에는 `merge` 유무로 갈랐는데
       // 드래그 선택에는 merge 가 없어서 기존 번역이 통째로 사라졌다.
       if (msg.partial) {
-        if (msg.merge) document.getElementById(`mlr-box-${msg.merge}`)?.remove();
+        // **바로 지우지 않는다.** 다시 읽어서 아무것도 안 나오면(그 영역에 글자가
+        // 없거나 검출이 실패하면) 원래 박스마저 사라져 손해만 본다. 결과가 도착한
+        // 뒤에 지운다.
+        if (msg.merge) {
+          const old = document.getElementById(`mlr-box-${msg.merge}`);
+          if (old) {
+            old.dataset.replacing = "1";
+            old.style.opacity = "0.35";
+          }
+        }
       } else {
         reset();
         extraCount = 0;
@@ -144,8 +153,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const b = overlay().querySelector("#mlr-boxes");
         if (b) b.style.transform = "";
       }
-      drawBoxes(msg.data.regions);
-      status(`원문 ${msg.data.regions.length}개 · ${msg.elapsed}ms`);
+      {
+        const drawn = drawBoxes(msg.data.regions);
+        const old = document.querySelector('.mlr-box[data-replacing="1"]');
+        if (old) {
+          if (drawn > 0) {
+            old.remove();
+          } else {
+            delete old.dataset.replacing;
+            old.style.opacity = "";
+            status("이 영역에서 글자를 못 찾았다 — 원래 박스를 되돌린다", true);
+            break;
+          }
+        }
+        status(`원문 ${drawn}개 · ${msg.elapsed}ms`);
+      }
       break;
     case "translation":
       fillTranslation(msg.data);
@@ -506,6 +528,7 @@ function bindPanel(root) {
       case "more": {
         const rest = root.querySelector("#mlr-panel .mlr-rest");
         rest.hidden = !rest.hidden;
+        syncPanel();
         break;
       }
     }
@@ -525,6 +548,7 @@ function syncPanel() {
   // 상태줄은 기본이 켜짐이라 이 버튼만 처음부터 켜진 표시다.
   on("status", !root.classList.contains("mlr-hide-status"));
   on("speak", speaking);
+  on("more", !root.querySelector("#mlr-panel .mlr-rest")?.hidden);
 }
 
 function reset() {
@@ -563,6 +587,7 @@ function drawBoxes(regions) {
   const boxes = overlay().querySelector("#mlr-boxes");
   // 전체 읽기는 `begin` 에서 이미 비웠다. 여기서 또 비우면 영역 하나만 다시
   // 읽을 때 나머지 박스가 통째로 사라진다.
+  let drawn = 0;
   for (const r of regions) {
     const p = toCss(r.bbox);
     // 검출기에 문맥을 주려고 넓게 보냈으므로, 고른 범위 밖의 것은 버린다.
@@ -586,8 +611,10 @@ function drawBoxes(regions) {
     // 라벨이 아래 말풍선을 가리지 않게, 박스가 화면 아래쪽이면 위로 붙인다
     if (p.top + p.height + 28 > window.innerHeight) div.classList.add("mlr-label-above");
     boxes.appendChild(div);
+    drawn += 1;
   }
   layoutLabels();
+  return drawn;
 }
 
 // ---------------------------------------------------------------------------
