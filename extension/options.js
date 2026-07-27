@@ -80,7 +80,17 @@ function sitePatterns(text) {
             .replace(/[/:?#].*$/, "")
         )
         .filter((h) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(h))
-        .flatMap((h) => [`*://${h}/*`, `*://*.${h}/*`])
+        // **`*://` 를 쓰지 않는다.** 요청하는 패턴은 `manifest.json` 의
+        // `optional_host_permissions` 에 든 것이어야 하는데, 거기 적힌 것은
+        // `http://*/*` 와 `https://*/*` 다. 스킴 와일드카드가 그 둘을 덮는지는
+        // 브라우저 판단에 달렸고, 안 맞으면 **요청이 통째로 거부돼 팝업조차 안 뜬다.**
+        // 스킴을 명시하면 그럴 일이 없다.
+        .flatMap((h) => [
+          `https://${h}/*`,
+          `https://*.${h}/*`,
+          `http://${h}/*`,
+          `http://*.${h}/*`,
+        ])
     ),
   ];
 }
@@ -117,13 +127,14 @@ document.getElementById("save").addEventListener("click", async () => {
   ];
 
   let granted = true;
-  if (wanted.length) {
+  const origins = [...new Set(wanted)];
+  if (origins.length) {
     try {
-      granted = await chrome.permissions.request({ origins: [...new Set(wanted)] });
+      granted = await chrome.permissions.request({ origins });
     } catch (err) {
       granted = false;
       saved.hidden = false;
-      saved.textContent = `권한 요청 실패: ${err.message}`;
+      saved.textContent = `권한 요청 실패 (${origins.length}개): ${err.message}`;
       saved.style.color = "#c33";
     }
   }
@@ -175,4 +186,32 @@ document.getElementById("purge").addEventListener("click", async () => {
   } catch (err) {
     out.textContent = `실패: ${err.message}`;
   }
+});
+
+
+// ---------------------------------------------------------------------------
+// 지금 가진 권한을 보여 준다
+//
+// "팝업이 안 뜬다" 는 두 가지다 — **요청이 거부된 것**과 **이미 있어서 물어볼 게
+// 없는 것**. 화면에 보여 주지 않으면 구별할 수 없다.
+// ---------------------------------------------------------------------------
+async function showPermissions() {
+  const box = document.getElementById("perms");
+  if (!box) return;
+  try {
+    const p = await chrome.permissions.getAll();
+    const list = (p.origins ?? []).filter((o) => !o.startsWith("http://127.0.0.1"));
+    box.textContent = list.length ? list.join("\n") : "(없음 — 「저장」 을 눌러 허용할 것)";
+  } catch (err) {
+    box.textContent = `읽기 실패: ${err.message}`;
+  }
+}
+
+showPermissions();
+document.getElementById("save").addEventListener("click", () => setTimeout(showPermissions, 300));
+document.getElementById("perms-clear")?.addEventListener("click", async () => {
+  const p = await chrome.permissions.getAll();
+  const gone = (p.origins ?? []).filter((o) => !o.startsWith("http://127.0.0.1"));
+  if (gone.length) await chrome.permissions.remove({ origins: gone });
+  showPermissions();
 });
