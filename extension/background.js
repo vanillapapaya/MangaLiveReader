@@ -91,7 +91,7 @@ chrome.commands.onCommand.addListener((cmd, tab) => {
   if (cmd === "refresh-page") run(tab, null, null, { refresh: true });
 });
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const tab = sender.tab;
   if (!tab) return;
   if (msg?.type === "read-rect") {

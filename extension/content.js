@@ -1040,15 +1040,27 @@ let currentUtterance = null;
 /** 지금 재생 중인 오디오. 멈출 때 필요하다. */
 let audioEl = null;
 
-/** 서버에 합성을 시켜 data URL 을 받는다. 실패하면 null. */
+/** 서버에 합성을 시켜 data URL 을 받는다. 실패하면 null (내장 음성으로 떨어진다).
+ *
+ * **실패 이유를 삼키지 않는다.** 예전에는 전부 조용히 null 로 만들어서, 서버가
+ * 주소를 안 받았는지·권한이 없는지·죽었는지 구분할 수 없었다. 실제로 background 의
+ * `ReferenceError` 한 줄이 여기 묻혀 "왜 내장 음성이 나오지" 로만 보였다.
+ */
+let ttsLastError = null;
+
 async function ttsFetch(text, lang) {
   if (stale || !alive()) return null;
   try {
     const r = await chrome.runtime.sendMessage({ type: "tts", text, lang });
-    return r?.url ?? null;
-  } catch {
-    return null;
+    if (r?.url) {
+      ttsLastError = null;
+      return r.url;
+    }
+    ttsLastError = r?.error ?? "음성 서버 주소가 비어 있다 (확장 옵션에서 설정)";
+  } catch (err) {
+    ttsLastError = String(err?.message || err);
   }
+  return null;
 }
 
 /** data URL 을 재생한다. 끝나거나 실패하면 resolve. */
@@ -1108,6 +1120,7 @@ async function speakOne(box) {
     await playAudio(url);
     return;
   }
+  if (ttsLastError) status(`음성 서버 실패: ${ttsLastError}`, true);
   if (fellBack) status(await noJapaneseReason());
   else if (!voice) {
     const n = (await loadVoices()).length;
@@ -1136,6 +1149,7 @@ async function speakAll() {
   const first = await resolveSpeech(boxes[0]);
   let firstUrl = await ttsFetch(first.text, first.lang);
   const useServer = firstUrl !== null;
+  if (!useServer && ttsLastError) status(`음성 서버 실패: ${ttsLastError}`, true);
   status(
     useServer
       ? "음성: 서버 (GPT-SoVITS)"
