@@ -886,7 +886,6 @@ function drawBoxes(regions) {
     if (ctx.partial) div.dataset.manual = "1";
     div.innerHTML = `<span class="mlr-label">${escapeHtml(r.text)}</span>`;
     // 라벨이 아래 말풍선을 가리지 않게, 박스가 화면 아래쪽이면 위로 붙인다
-    if (p.top + p.height + 28 > window.innerHeight) div.classList.add("mlr-label-above");
     boxes.appendChild(div);
     drawn += 1;
   }
@@ -1608,7 +1607,6 @@ async function restoreEdits() {
       width: `${p.width}px`, height: `${p.height}px`,
     });
     div.innerHTML = `<span class="mlr-label">${escapeHtml(a.ko || a.ja)}</span>`;
-    if (p.top + p.height + 28 > window.innerHeight) div.classList.add("mlr-label-above");
     boxes.appendChild(div);
   }
   if (i) status(`손으로 더한 ${i}개 복원`);
@@ -1684,7 +1682,7 @@ function relayoutBoxes() {
     el.style.top = `${p.top}px`;
     el.style.width = `${p.width}px`;
     el.style.height = `${p.height}px`;
-    el.classList.toggle("mlr-label-above", p.top + p.height + 28 > window.innerHeight);
+
   }
   layoutLabels();
 }
@@ -1757,6 +1755,39 @@ function layoutLabels() {
   });
 }
 
+//: 라벨이 화면 가장자리에서 남길 여백.
+const LABEL_EDGE_PAD = 8;
+
+/** 라벨이 화면 밖으로 나가지 않게 방향과 최대 폭을 정한다.
+ *
+ * 예전에는 `left: 0` 에 고정이고, 위로 붙일지는 **28px 어림값**으로 판단했다.
+ * 그래서 오른쪽 끝 말풍선의 번역은 오른쪽으로 넘쳐 못 읽었고, 여러 줄짜리 긴
+ * 번역은 아래로 넘쳐 못 읽었다 — 어림값이 한 줄 기준이었기 때문이다.
+ *
+ * **실제 크기를 재서 정한다.**
+ */
+function fitLabel(box, label) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const b = box.getBoundingClientRect();
+
+  // 좌우: 왼쪽에 붙였을 때 화면을 넘으면 오른쪽 정렬로 바꾼다. 어느 쪽이든
+  // 쓸 수 있는 폭을 재서 최대 폭으로 준다 — 그래야 줄이 접혀서 다 보인다.
+  const roomRight = vw - b.left - LABEL_EDGE_PAD;
+  const roomLeft = b.right - LABEL_EDGE_PAD;
+  const toLeft = roomRight < 140 && roomLeft > roomRight;
+  box.classList.toggle("mlr-label-left", toLeft);
+  label.style.setProperty(
+    "--mlr-label-max",
+    `${Math.max(120, Math.min(340, toLeft ? roomLeft : roomRight))}px`
+  );
+
+  // 위아래: **실제 높이를 재고** 정한다. 여러 줄이면 어림값으로는 못 맞춘다.
+  label.style.removeProperty("display");
+  const h = label.getBoundingClientRect().height || 0;
+  box.classList.toggle("mlr-label-above", b.bottom + 2 + h > vh - LABEL_EDGE_PAD);
+}
+
 function doLayoutLabels() {
   const root = document.getElementById(OVERLAY_ID);
   if (!root) return;
@@ -1782,6 +1813,10 @@ function doLayoutLabels() {
   const items = labels
     .map((l) => {
       l.style.transform = "";
+      // **겹침을 풀기 전에 화면 안으로 들어오게 한다.** 순서가 바뀌면 방향이
+      // 바뀌면서 사각형이 달라져 겹침 계산이 어긋난다.
+      const box = l.closest(".mlr-box");
+      if (box) fitLabel(box, l);
       return { l, r: l.getBoundingClientRect() };
     })
     .sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left);
@@ -1792,7 +1827,8 @@ function doLayoutLabels() {
     while (dy <= LABEL_MAX_SHIFT_PX && placed.some((p) => hit(p, shift(r, dy)))) {
       dy += LABEL_STEP_PX;
     }
-    if (dy > LABEL_MAX_SHIFT_PX) dy = 0; // 자리를 못 찾으면 원위치 — 멀리 보내는 게 더 나쁘다
+    // 밀어낸 결과가 화면 밖이면 밀지 않는다 — 안 겹치게 하려다 아예 못 읽게 된다.
+    if (dy > LABEL_MAX_SHIFT_PX || r.bottom + dy > window.innerHeight - LABEL_EDGE_PAD) dy = 0;
     if (dy) l.style.transform = `translateY(${dy}px)`;
     placed.push(shift(r, dy));
   }

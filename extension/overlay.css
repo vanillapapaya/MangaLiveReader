@@ -79,7 +79,9 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   width: max-content;
-  max-width: min(32vw, 340px);
+  /* 박스가 화면 가장자리에 있으면 그쪽으로 쓸 수 있는 폭이 좁다. 그 폭을
+     `layoutLabels()` 가 재서 여기 꽂는다 — 없으면 기본값을 쓴다. */
+  max-width: var(--mlr-label-max, min(32vw, 340px));
   opacity: 0;
   transition: opacity 0.08s;
   /* **라벨은 모든 박스 위에 그린다.**
@@ -125,6 +127,13 @@
   top: auto;
   bottom: 100%;
   margin: 0 0 2px 0;
+}
+
+/* 화면 오른쪽 끝 박스는 라벨을 **오른쪽에 맞춰** 왼쪽으로 편다.
+   `left: 0` 고정이면 오른쪽 말풍선의 번역이 화면 밖으로 나가 못 읽는다. */
+.mlr-box.mlr-label-left .mlr-label {
+  left: auto;
+  right: 0;
 }
 
 .mlr-box.mlr-translated .mlr-label {
