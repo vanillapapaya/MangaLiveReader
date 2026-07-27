@@ -4,7 +4,7 @@
 # true면 기동 시 Tailscale 인터페이스 IP를 찾아 거기에만 바인딩한다.
 # 못 찾으면 기동을 거부한다 (0.0.0.0 폴백 금지).
 bind_tailscale_only = true
-# **맥북 모드.** Tailscale 주소(100.66.125.121)에만 바인딩한다.
+# **맥북 모드.** Tailscale 주소(<서비스 머신의 tailscale 주소>)에만 바인딩한다.
 #
 # 이 값이 false 면 **서비스를 윈도우에서 띄워야 한다** — WSL 은 NAT 뒤(172.30.x)라
 # 윈도우의 Tailscale 인터페이스가 안 보이고, 기동을 거부한다. `run-service.cmd` 를 쓸 것.

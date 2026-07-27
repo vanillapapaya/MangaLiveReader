@@ -7,10 +7,11 @@
   "permissions": ["activeTab", "scripting", "storage"],
 
   "host_permissions": [
-    "http://100.66.125.121:8788/*",
     "http://127.0.0.1:8788/*",
     "http://localhost:8788/*"
   ],
+
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
 
   "options_ui": { "page": "options.html", "open_in_tab": true },
 

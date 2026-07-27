@@ -374,8 +374,8 @@ WSL 기본이 3.14.4 인데 `requires-python = ">=3.11,<3.12"` 다. `uv sync --p
 ### 키 파일이 윈도우 프로필에 있다
 
 `env.py` 의 기본 경로는 `~/.config/mangalivereader/env` 인데 WSL 의 `~` 는
-`/home/vanillapapaya` 라 비어 있다. 실제 파일은
-`/mnt/c/Users/vanillapapaya/.config/mangalivereader/env` 다.
+`/home/<사용자>` 라 비어 있다. 실제 파일은
+`/mnt/c/Users/<사용자>/.config/mangalivereader/env` 다.
 
 복사하면 키가 두 군데가 되어 나중에 하나만 갈게 된다. `run-service.sh` 가
 `MTL_ENV_FILE` 로 윈도우 쪽 파일을 가리키게 했다.

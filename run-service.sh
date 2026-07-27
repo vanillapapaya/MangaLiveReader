@@ -29,9 +29,13 @@ fi
 # (`~/.config/mangalivereader/env`) 가 비어 있다. 키를 복사하면 두 군데가 되어
 # 나중에 하나만 갈게 되므로, 윈도우 쪽 파일을 그대로 가리킨다.
 if [[ -z "${MTL_ENV_FILE:-}" && ! -f "$HOME/.config/mangalivereader/env" ]]; then
+  # 윈도우 사용자명은 WSL 사용자명과 다를 수 있다. cmd 에게 직접 물어본다.
+  win_home=$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')
+  win_home=${win_home//\\//}                       # C:\Users\x → C:/Users/x
+  win_home=/mnt/${win_home:0:1}${win_home:2}       # → /mnt/c/Users/x
   for cand in \
-    "/mnt/c/Users/$USER/.config/mangalivereader/env" \
-    "/mnt/c/Users/Vanillapapaya/.config/mangalivereader/env"
+    "$win_home/.config/mangalivereader/env" \
+    "/mnt/c/Users/$USER/.config/mangalivereader/env"
   do
     if [[ -f "$cand" ]]; then
       export MTL_ENV_FILE="$cand"

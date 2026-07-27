@@ -22,7 +22,7 @@
 |---|---|---|
 | 실행 | `./run-service.sh` | `run-service.cmd` |
 | `service.toml` `dev_bind_loopback` | `true` | `false` |
-| 확장 옵션 화면 주소 | `http://127.0.0.1:8788/read` | `http://100.66.125.121:8788/read` |
+| 확장 옵션 화면 주소 | `http://127.0.0.1:8788/read` | `http://<서비스-머신-tailscale-주소>:8788/read` |
 | 맥북에서 붙나 | ✗ | ✓ |
 
 **WSL 로는 맥북에서 못 붙는다.** WSL 은 NAT 뒤(172.30.x)라 윈도우의 Tailscale
@@ -34,7 +34,7 @@
 기동하면 이렇게 뜬다:
 
 ```
-키 파일: /mnt/c/Users/vanillapapaya/.config/mangalivereader/env (윈도우 프로필)
+키 파일: /mnt/c/Users/<사용자>/.config/mangalivereader/env (윈도우 프로필)
 GPU: NVIDIA GeForce RTX 5080 · torch 2.11.0+cu128
 mtl-service → http://127.0.0.1:8788
 ```
@@ -43,7 +43,7 @@ mtl-service → http://127.0.0.1:8788
 
 ```bash
 curl -s http://127.0.0.1:8788/health          # WSL 쪽
-curl -s http://100.66.125.121:8788/health     # 윈도우 쪽
+curl -s http://<서비스-머신-tailscale-주소>:8788/health     # 윈도우 쪽
 # {"status":"ok","models_loaded":false,"gpu":"NVIDIA GeForce RTX 5080",...}
 ```
 
@@ -130,7 +130,7 @@ GPU·네트워크 없이 도는 것만 있다. 파이프라인 전체 검증은 
 
 ## 다른 기기에서 쓰기 (맥북 등)
 
-서비스는 GPU 가 있는 vanillapc 에서만 돈다. 다른 기기는 확장만 깔면 된다 —
+서비스는 GPU 가 있는 서비스 머신 에서만 돈다. 다른 기기는 확장만 깔면 된다 —
 캡처와 오버레이는 브라우저가 하고 연산은 전부 원격이다.
 
 위 표의 **윈도우** 열대로 맞추면 된다. 그 밖에 이미 해 둔 것:
@@ -147,7 +147,7 @@ GPU·네트워크 없이 도는 것만 있다. 파이프라인 전체 검증은 
   주소를 바꾸면 여기도 고치고 확장을 다시 읽어야 한다 (옵션 화면만 바꾸면 CORS 로 막힌다)
 
 **인증은 아직 꺼져 있다** (`auth_disabled = true`). 외부에는 안 열리지만 같은 tailnet 의
-다른 기기(ipadpro, archlinux, vanillamacpro)는 전부 붙을 수 있다. 켜려면
+다른 기기(아이패드, archlinux, 다른 맥)는 전부 붙을 수 있다. 켜려면
 `service.toml` 의 `auth_token` 을 정하고 `auth_disabled = false` 로 바꾼 뒤 확장 옵션
 화면에 같은 값을 넣는다.
 

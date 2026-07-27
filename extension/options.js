@@ -1,6 +1,6 @@
 // 설정 화면. background.js 의 DEFAULTS 와 키 이름이 같아야 한다.
 const DEFAULTS = {
-  serviceUrl: "http://100.66.125.121:8788/read",
+  serviceUrl: "http://127.0.0.1:8788/read",
   authToken: "",
 };
 
@@ -14,12 +14,36 @@ chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   token.value = v.authToken;
 });
 
+/** 주소의 출처(origin) 만 뽑는다. 권한은 출처 단위로 준다. */
+function originPattern(u) {
+  try {
+    return `${new URL(u).origin}/*`;
+  } catch {
+    return null;
+  }
+}
+
 document.getElementById("save").addEventListener("click", async () => {
-  await chrome.storage.sync.set({
-    serviceUrl: url.value.trim() || DEFAULTS.serviceUrl,
-    authToken: token.value.trim(),
-  });
+  const value = url.value.trim() || DEFAULTS.serviceUrl;
+
+  // **루프백이 아닌 주소는 권한을 따로 받아야 한다.** 사람마다 서비스 머신 주소가
+  // 달라서 `manifest.json` 에 못 박을 수 없다 — `optional_host_permissions` 로
+  // 두고 여기서 요청한다. 권한이 없으면 fetch 가 CORS 로 조용히 막힌다.
+  const pattern = originPattern(value);
+  if (pattern && !(await chrome.permissions.contains({ origins: [pattern] }))) {
+    const granted = await chrome.permissions.request({ origins: [pattern] });
+    if (!granted) {
+      saved.hidden = false;
+      saved.textContent = `${pattern} 권한을 거부했다 — 그 주소로는 못 붙는다`;
+      saved.style.color = "#c33";
+      return;
+    }
+  }
+
+  await chrome.storage.sync.set({ serviceUrl: value, authToken: token.value.trim() });
   saved.hidden = false;
+  saved.textContent = "저장했다";
+  saved.style.color = "";
   setTimeout(() => (saved.hidden = true), 1500);
 });
 

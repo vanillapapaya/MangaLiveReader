@@ -521,7 +521,7 @@ Gemini 는 단가가 절반인데 사고 토큰이 3.3배라 **실제로 더 비
 
 맥북에서 붙어 보려고 M2 로 미뤄 뒀던 바인딩을 앞당겼다.
 
-- `service.toml [server].dev_bind_loopback = false` — 이제 Tailscale 주소(100.66.125.121)에만 바인딩
+- `service.toml [server].dev_bind_loopback = false` — 이제 Tailscale 주소(<서비스 머신의 tailscale 주소>)에만 바인딩
 - 윈도우 인바운드 규칙 `mtl-service (Tailscale)` 생성 — Tailscale 인터페이스 · Private ·
   TCP 8788 · 이 venv 의 python.exe 로만 좁힘. 기본 정책이 차단이라 이게 없으면 조용히 막힌다
 - 확장 서비스 주소를 `chrome.storage.sync` 로 뺐다 (옵션 화면 추가). 하드코딩이면

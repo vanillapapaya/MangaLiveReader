@@ -10,14 +10,15 @@
 // 서비스 주소는 저장소에서 읽는다 (옵션 화면에서 설정). 하드코딩하면 맥북·윈도우
 // 양쪽에서 쓸 때마다 파일을 고쳐야 한다.
 //
-// 기본값이 루프백이 아니라 **Tailscale 주소**인 이유: 이 주소 하나면 맥북과 윈도우
-// 양쪽에서 설정 없이 돈다. 서비스가 도는 윈도우 머신의 브라우저에서도 자기
-// Tailscale IP 로 붙기 때문이다.
+// 기본값은 루프백이다 — 서비스와 브라우저가 같은 머신에 있는 흔한 경우.
 //
-// 루프백은 서비스를 WSL 에서 띄울 때만 쓴다 (`run-service.sh`). 그때는 옵션
-// 화면에서 http://127.0.0.1:8788/read 로 바꾼다.
+// **다른 기기에서 쓸 때는 옵션 화면에서 서비스 주소를 넣는다.** 서비스가 Tailscale
+// 인터페이스에만 바인딩하므로(`service.toml` 의 `bind_tailscale_only`) 그 머신의
+// Tailscale 주소를 넣으면 된다. 그 주소는 `manifest.json` 에 못 박아 둘 수 없으니
+// (사람마다 다르다) `optional_host_permissions` 로 두고 옵션 화면이 저장할 때
+// 권한을 요청한다.
 const DEFAULTS = {
-  serviceUrl: "http://100.66.125.121:8788/read", // vanillapc
+  serviceUrl: "http://127.0.0.1:8788/read",
   authToken: "", // service.toml 의 auth_disabled = false 로 바꾸면 채운다
 };
 

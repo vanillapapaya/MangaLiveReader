@@ -37,8 +37,8 @@ Vivaldi/Chrome 에서 `chrome://extensions` → 우상단 **개발자 모드** �
 **압축해제된 확장 프로그램을 로드** → 이 `extension/` 폴더 선택.
 
 **2-1. 서비스 주소 확인** — 확장 옵션 화면(`chrome://extensions` → 이 확장 → 세부정보
-→ 확장 프로그램 옵션)에서 주소를 본다. 기본값은 `http://100.66.125.121:8788/read`
-(vanillapc 의 Tailscale 주소)다.
+→ 확장 프로그램 옵션)에서 주소를 본다. 기본값은 `http://<서비스-머신-tailscale-주소>:8788/read`
+(서비스 머신 의 Tailscale 주소)다.
 
 **루프백이 기본값이 아닌 이유:** 서비스는 Tailscale 인터페이스에만 바인딩한다
 (`DESIGN.md` §4.4 — `0.0.0.0` 폴백 없음). 서비스가 도는 그 머신의 브라우저에서도
@@ -128,7 +128,7 @@ Vivaldi/Chrome 에서 `chrome://extensions` → 우상단 **개발자 모드** �
 
 ## 다른 기기에서 쓰기 (맥북 등)
 
-서비스는 vanillapc 한 곳에서만 돈다 (GPU가 거기 있다). 다른 기기는 **확장만** 깔면
+서비스는 서비스 머신 한 곳에서만 돈다 (GPU가 거기 있다). 다른 기기는 **확장만** 깔면
 된다 — 캡처와 오버레이는 브라우저가 하고 연산은 전부 원격이다.
 
 **필요한 것은 셋이다.**
@@ -140,7 +140,7 @@ Vivaldi/Chrome 에서 `chrome://extensions` → 우상단 **개발자 모드** �
    `mtl-service (Tailscale)` 규칙을 만들어 뒀다: Tailscale 인터페이스 · Private 프로필 ·
    TCP 8788 · 이 프로젝트의 `.venv\Scripts\python.exe` 로만 좁혀 놓았다.
    지우려면 `Remove-NetFirewallRule -DisplayName 'mtl-service (Tailscale)'`
-3. **확장의 `host_permissions`** — `manifest.json` 에 `http://100.66.125.121:8788/*` 가
+3. **확장의 `host_permissions`** — `manifest.json` 에 `http://<서비스-머신-tailscale-주소>:8788/*` 가
    있어야 한다. 주소를 바꾸면 여기도 같이 고치고 확장을 다시 읽어야 한다
    (옵션 화면만 바꾸면 요청이 CORS 로 막힌다)
 
