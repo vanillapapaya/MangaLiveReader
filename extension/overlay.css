@@ -14,6 +14,7 @@
   position: absolute;
   top: 8px;
   left: 8px;
+  z-index: 8; /* 패널과 같은 이유 */
   padding: 6px 10px;
   background: rgba(20, 20, 24, 0.88);
   color: #e8e8ea;
@@ -216,6 +217,9 @@
   position: absolute;
   top: 8px;
   right: 8px;
+  /* **라벨(5)·호버 박스(6)보다 위여야 한다.** 이게 없으면 번역문이 버튼을 가려
+     누를 수가 없다. 메뉴(10)보다는 아래 — 메뉴는 패널 위에서 열린다. */
+  z-index: 8;
   display: flex;
   flex-direction: column;
   gap: 2px;

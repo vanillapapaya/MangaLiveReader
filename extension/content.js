@@ -1063,18 +1063,24 @@ async function ttsFetch(text, lang) {
   return null;
 }
 
-/** data URL 을 재생한다. 끝나거나 실패하면 resolve. */
+/** data URL 을 재생한다. **재생됐으면 true, 못 했으면 false.**
+ *
+ * 예전에는 `a.play().catch(done)` 로 실패를 조용히 삼켰다. 그러면 브라우저가
+ * 자동재생을 막았을 때 **소리도 안 나고 이유도 안 보인다** — 서버 합성은 성공했는데
+ * 재생만 막힌 경우가 정확히 그랬다. 이제 false 를 돌려 내장 음성으로 떨어진다.
+ */
 function playAudio(url) {
   return new Promise((resolve) => {
     const a = new Audio(url);
     audioEl = a;
-    const done = () => {
+    const done = (ok, why) => {
       if (audioEl === a) audioEl = null;
-      resolve();
+      if (!ok && why) ttsLastError = `재생 실패: ${why}`;
+      resolve(ok);
     };
-    a.onended = done;
-    a.onerror = done;
-    a.play().catch(done); // 자동재생이 막히면 조용히 넘어간다
+    a.onended = () => done(true);
+    a.onerror = () => done(false, "오디오를 못 읽었다");
+    a.play().catch((err) => done(false, String(err?.name || err)));
   });
 }
 
@@ -1116,10 +1122,7 @@ async function speakOne(box) {
   const { text, lang, voice, fellBack } = await resolveSpeech(box);
   if (!text) return;
   const url = await ttsFetch(text, lang);
-  if (url) {
-    await playAudio(url);
-    return;
-  }
+  if (url && (await playAudio(url))) return;
   if (ttsLastError) status(`음성 서버 실패: ${ttsLastError}`, true);
   if (fellBack) status(await noJapaneseReason());
   else if (!voice) {
@@ -1178,8 +1181,12 @@ async function speakAll() {
     box.classList.add("mlr-speaking");
     status(`읽는 중 ${i + 1}/${boxes.length}`);
     try {
-      if (ready) await playAudio(ready);
-      else if (cur.text) await say(cur.text, cur.lang, cur.voice);
+      // 서버 오디오가 재생되지 않으면(자동재생 차단 등) 내장 음성으로 떨어진다.
+      const played = ready ? await playAudio(ready) : false;
+      if (!played && cur.text) {
+        if (ready && ttsLastError) status(`${ttsLastError} — 내장 음성으로 읽는다`, true);
+        await say(cur.text, cur.lang, cur.voice);
+      }
     } finally {
       box.classList.remove("mlr-speaking");
     }
