@@ -62,7 +62,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
   else if (msg?.type === "do-read") run(tab, null, null, { refresh: Boolean(msg.refresh) });
   else if (msg?.type === "set-auto") setAuto(tab, msg.on);
-  else if (msg?.type === "purge-all") purgeAll(tab);
+  else if (msg?.type === "purge-all") purgeCache(tab, { all: true });
+  else if (msg?.type === "purge-page") purgePage(tab);
   else if (msg?.type === "page-maybe-changed") {
     // 워커가 죽었다 살아나도 `storage.session` 에서 상태를 되찾는다 (loadState).
     schedule(tab);
@@ -187,12 +188,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(KEY(tabId)).catch(() => {});
 });
 
-/** 캐시를 통째로 지운다. 옵션 화면과 패널이 부른다. */
-async function purgeAll(tab) {
-  const say = (m, err) =>
-    chrome.tabs
-      .sendMessage(tab.id, { type: err ? "error" : "status", message: m, data: { message: m }, elapsed: 0 })
-      .catch(() => {});
+function tell(tab, m, err) {
+  return chrome.tabs
+    .sendMessage(tab.id, { type: err ? "error" : "status", message: m, data: { message: m }, elapsed: 0 })
+    .catch(() => {});
+}
+
+/** 캐시를 지운다. `{all:true}` 또는 `{phash, profile}`. */
+async function purgeCache(tab, body) {
   try {
     const { serviceUrl, authToken } = await settings();
     // /read 엔드포인트에서 경로만 바꾼다 — 주소를 두 곳에 두면 한쪽만 고치게 된다.
@@ -200,13 +203,41 @@ async function purgeAll(tab) {
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(authToken ? { "X-Auth-Token": authToken } : {}) },
-      body: JSON.stringify({ all: true }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const { deleted } = await resp.json();
-    say(`캐시 ${deleted}개 지웠다`);
+    return deleted;
   } catch (err) {
-    say(`캐시 지우기 실패: ${err.message}`, true);
+    tell(tab, `캐시 지우기 실패: ${err.message}`, true);
+    return null;
+  }
+}
+
+/** 지금 보고 있는 페이지의 캐시만 지운다. **다시 읽지는 않는다.**
+ *
+ * 「갱신」(지우고 바로 다시 읽기)과 나눠 둔 이유: 결과가 이상한데 지금 당장 다시
+ * 읽고 싶지는 않을 때가 있다 — 번역 비용이 드니까. 지워만 두면 다음에 그 페이지를
+ * 열 때 새로 읽는다.
+ *
+ * 캐시 키는 화면 픽셀의 해시라 **지금 화면을 한 번 찍어야** 무엇을 지울지 안다.
+ */
+async function purgePage(tab) {
+  try {
+    const { phash } = await prepare(tab, null, true);
+    await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
+    const deleted = await purgeCache(tab, { phash, profile: hostToProfile(tab.url) });
+    if (deleted !== null) {
+      tell(tab, deleted ? `이 페이지 캐시를 지웠다 (${deleted}개)` : "이 페이지는 캐시에 없다");
+      // 기준 해시도 버린다. 안 그러면 자동 감지가 "안 바뀌었다" 로 보고 안 읽는다.
+      const st = watching.get(tab.id);
+      if (st) {
+        st.lastHash = null;
+        saveState(tab.id, st);
+      }
+    }
+  } catch (err) {
+    tell(tab, `캐시 지우기 실패: ${err.message}`, true);
   }
 }
 

@@ -476,6 +476,7 @@ const PANEL_HTML = `
     <button data-act="labels" title="라벨 전체 펼치기/접기 (Alt+Shift+L)">라벨</button>
     <button data-act="extra"  title="숨긴 효과음·잡문 보기 (Alt+Shift+S)">효과음</button>
     <button data-act="status" title="왼쪽 위 상태줄 켜기/끄기">상태</button>
+    <button data-act="drop"   title="이 페이지의 캐시만 지운다 (다시 읽지는 않는다)">캐시삭제</button>
   </div>
 </div>`;
 
@@ -547,6 +548,9 @@ function bindPanel(root) {
       case "speak":
         if (speaking) stopSpeaking();
         else speakAll();
+        break;
+      case "drop":
+        send({ type: "purge-page" });
         break;
       case "more": {
         const rest = root.querySelector("#mlr-panel .mlr-rest");
