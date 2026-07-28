@@ -23,6 +23,14 @@ let removedMarks = [];
 /** 마지막 probe 에서 본 뷰어 요소들. 박스가 스크롤을 따라가는 데 쓴다. */
 let viewerEls = [];
 
+//: 페이지를 옮겨도 남는 토글. `저장소 키 → 오버레이 클래스`.
+//: **쓰는 곳보다 위에 둔다** — `const` 는 초기화 전에 못 읽는다(TDZ).
+const STICKY_TOGGLES = {
+  showAll: "mlr-show-all",
+  showExtra: "mlr-show-extra",
+  hideStatus: "mlr-hide-status",
+};
+
 // ---------------------------------------------------------------------------
 // 확장이 다시 로드되면 이 스크립트는 유령이 된다
 //
@@ -600,6 +608,7 @@ function overlay() {
     (fsElement() ?? document.documentElement).appendChild(el);
     bindPanel(el);
     applyLabelSize();
+    applyToggles();
   } else {
     // 이미 있으면 지금 전체화면 상태에 맞는 자리인지 확인한다.
     reparentOverlay();
@@ -620,6 +629,49 @@ const LABEL_SIZE_MIN = 9;
 const LABEL_SIZE_MAX = 20;
 const LABEL_SIZE_DEFAULT = 12;
 
+// ---------------------------------------------------------------------------
+// 눌러 놓은 토글은 페이지를 옮겨도 남는다
+//
+// 「라벨」「효과음」「상태」「패널 고정」은 화면에만 있어서 페이지를 넘기거나 다른
+// 작품으로 옮기면 초기값으로 돌아갔다. 매번 다시 누르는 것이 번거롭다.
+//
+// 「자동」은 예외다 — 그건 background 가 탭별로 들고 있고, 사이트 목록에 따라
+// 알아서 켜지므로 여기서 건드리지 않는다.
+//
+// `storage.sync` 라 기기 사이에도 따라간다 (맥북에서 켜면 윈도우에서도 켜져 있다).
+// ---------------------------------------------------------------------------
+
+async function applyToggles() {
+  const root = document.getElementById(OVERLAY_ID);
+  if (!root) return;
+  let got;
+  try {
+    got = await chrome.storage.sync.get([...Object.keys(STICKY_TOGGLES), "panelPinned"]);
+  } catch {
+    return;
+  }
+  for (const [key, cls] of Object.entries(STICKY_TOGGLES)) {
+    root.classList.toggle(cls, Boolean(got[key]));
+  }
+  root.querySelector("#mlr-panel")?.classList.toggle("mlr-pinned", Boolean(got.panelPinned));
+  // 「⋯」 안쪽도 고정 상태에 맞춰 열어 둔다.
+  const rest = root.querySelector("#mlr-panel .mlr-rest");
+  if (rest) rest.hidden = !got.panelPinned;
+  syncPanel();
+  layoutLabels();
+}
+
+/** 지금 상태를 저장한다. 토글을 누를 때마다 부른다. */
+function saveToggles() {
+  const root = document.getElementById(OVERLAY_ID);
+  if (!root) return;
+  const out = { panelPinned: Boolean(root.querySelector("#mlr-panel")?.classList.contains("mlr-pinned")) };
+  for (const [key, cls] of Object.entries(STICKY_TOGGLES)) {
+    out[key] = root.classList.contains(cls);
+  }
+  chrome.storage.sync.set(out).catch(() => {});
+}
+
 /** 저장된 글씨 크기를 오버레이에 꽂는다. CSS 변수 하나면 기본·전체펼침이 같이 따라온다. */
 async function applyLabelSize() {
   const el = document.getElementById(OVERLAY_ID);
@@ -639,7 +691,12 @@ async function applyLabelSize() {
 // 보이면 어느 크기가 맞는지 고르기가 번거롭다.
 try {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.labelSize) applyLabelSize();
+    if (area !== "sync") return;
+    if (changes.labelSize) applyLabelSize();
+    // 다른 탭에서 토글을 누르면 여기도 따라간다 — 탭마다 다르면 헷갈린다.
+    if (Object.keys(STICKY_TOGGLES).some((k) => changes[k]) || changes.panelPinned) {
+      applyToggles();
+    }
   });
 } catch {
   /* 저장소가 막힌 환경 */
@@ -705,15 +762,18 @@ function bindPanel(root) {
         root.classList.toggle("mlr-show-all");
         layoutLabels();
         syncPanel();
+        saveToggles();
         break;
       case "extra":
         root.classList.toggle("mlr-show-extra");
         layoutLabels();
         syncPanel();
+        saveToggles();
         break;
       case "status":
         root.classList.toggle("mlr-hide-status");
         syncPanel();
+        saveToggles();
         break;
       case "speak":
         if (speaking) stopSpeaking();
@@ -972,6 +1032,7 @@ function openMenu(box, x, y) {
       const on = overlay().classList.toggle("mlr-show-extra");
       layoutLabels();
       syncPanel();
+      saveToggles();
       status(on ? "효과음·잡문 표시" : `효과음·잡문 ${extraCount}개 숨김`);
       return;
     }
@@ -1942,6 +2003,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     const on = overlay().classList.toggle("mlr-show-extra");
     syncPanel();
+    saveToggles();
     status(on ? "효과음·잡문 표시" : `효과음·잡문 ${extraCount}개 숨김`);
     return;
   }
@@ -1951,6 +2013,7 @@ document.addEventListener("keydown", (e) => {
       el.classList.toggle("mlr-show-all");
       layoutLabels();
       syncPanel();
+      saveToggles();
     }
   }
 });
