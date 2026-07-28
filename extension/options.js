@@ -5,6 +5,8 @@ const DEFAULTS = {
   ttsUrl: "",
   ttsVoice: "",
   autoSites: "",
+  autoSitesOn: true,
+  autoPaths: "",
   model: "",
   labelSize: 12,
 };
@@ -16,6 +18,8 @@ const ttsurl = document.getElementById("ttsurl");
 const ttsvoice = document.getElementById("ttsvoice");
 const voicemsg = document.getElementById("voicemsg");
 const autosites = document.getElementById("autosites");
+const autositeson = document.getElementById("autositeson");
+const autopaths = document.getElementById("autopaths");
 const model = document.getElementById("model");
 const labelsize = document.getElementById("labelsize");
 const labelsizeOut = document.getElementById("labelsize-out");
@@ -26,6 +30,16 @@ function showLabelSize() {
   labelsizeOut.textContent = `${labelsize.value}px`;
   labelsizeSample.style.fontSize = `${labelsize.value}px`;
 }
+
+/** 꺼져 있으면 목록을 흐리게 — 적어 놔도 안 쓴다는 것이 보여야 한다. */
+function showAutoSites() {
+  for (const el of [autosites, autopaths]) {
+    el.disabled = !autositeson.checked;
+    el.style.opacity = autositeson.checked ? "" : "0.45";
+  }
+}
+
+autositeson.addEventListener("change", showAutoSites);
 
 labelsize.addEventListener("input", () => {
   showLabelSize();
@@ -40,6 +54,9 @@ chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   token.value = v.authToken;
   ttsurl.value = v.ttsUrl;
   autosites.value = v.autoSites;
+  autositeson.checked = Boolean(v.autoSitesOn);
+  autopaths.value = v.autoPaths;
+  showAutoSites();
   model.value = v.model;
   labelsize.value = v.labelSize;
   showLabelSize();
@@ -145,7 +162,9 @@ document.getElementById("save").addEventListener("click", async () => {
   const wanted = [
     ...(originPattern(value) ? [originPattern(value)] : []),
     ...(tts && originPattern(tts) ? [originPattern(tts)] : []),
-    ...sitePatterns(autosites.value),
+    // **꺼져 있으면 사이트 권한을 안 묻는다.** 안 쓸 권한 때문에 팝업에 만화
+    // 사이트가 줄줄이 뜨면 무엇을 허용하는 것인지 알기 어렵다.
+    ...(autositeson.checked ? sitePatterns(autosites.value) : []),
   ];
 
   let granted = true;
@@ -167,6 +186,8 @@ document.getElementById("save").addEventListener("click", async () => {
     ttsUrl: tts,
     ttsVoice: ttsvoice.value,
     autoSites: autosites.value,
+    autoSitesOn: autositeson.checked,
+    autoPaths: autopaths.value,
     model: model.value,
     labelSize: Number(labelsize.value),
   });

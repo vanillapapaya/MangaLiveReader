@@ -76,6 +76,27 @@
   <code>www.yanmaga.jp</code> 에도 걸린다.
   <br /><b>뷰어가 실제로 있을 때만 켜진다</b> — 목차 페이지에서는 안 켜진다.
 </p>
+<label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-weight:600">
+  <input id="autositeson" type="checkbox" style="width:auto;margin:0" />
+  사이트에서 자동으로 켜기
+</label>
+<p class="hint">
+  자동 실행에는 사용자 조작이 없어서 권한 팝업을 띄울 수가 없다. 권한이 빠져 있으면
+  페이지를 열자마자 조용히 실패하므로, 사이트를 더한 뒤에는 <b>한 번 「저장」</b> 을
+  눌러 허용해 둘 것.
+</p>
+
+<label for="autopaths" style="margin-top:16px">주소에 이 낱말이 있을 때만</label>
+<input id="autopaths" type="text" spellcheck="false"
+  placeholder="예: viewer, episode, chapter" />
+<p class="hint">
+  <b>호스트만 보면 홈페이지에서도 켜진다.</b> 뷰어 판정은 큰 그림 하나면 통과하는데
+  홈페이지 배너가 그대로 걸리기 때문이다. 그래서 주소도 같이 본다 —
+  <code>/episode/12345</code> 처럼 <b>주소 칸 하나와 통째로 같아야</b> 맞는 것으로
+  친다 (<code>episode-123</code> 처럼 뒤에 구분자가 붙은 것도 맞다).
+  <br />보는 사이트의 뷰어 주소에 여기 없는 낱말이 쓰이면 그것을 더할 것.
+  <b>비우면 이 규칙을 안 쓴다.</b>
+</p>
 <textarea id="autosites" rows="8" spellcheck="false"
   style="width:100%;box-sizing:border-box;padding:6px 8px;font:13px/1.5 ui-monospace,Consolas,monospace"></textarea>
 

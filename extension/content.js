@@ -2279,6 +2279,26 @@ function throttle(fn, ms) {
 //      `probeViewer()` 가 폴백(뷰포트 전체)으로 떨어지면 뷰어가 아니라고 본다.
 // ---------------------------------------------------------------------------
 
+/** 주소가 뷰어 페이지처럼 생겼는가.
+ *
+ * **호스트만 보면 홈페이지에서도 켜진다.** `probeViewer()` 는 200px 넘는 그림 하나면
+ * 통과하는데 홈페이지 배너가 그대로 걸린다 — 메인만 들어가도 다 번역해 버렸다.
+ *
+ * 주소 칸을 `/` 로 잘라 **한 칸과 통째로 같은지** 본다. 일부만 겹치는 것은 안 친다
+ * (`read` 가 `readme` 에 걸리면 곤란하다). 다만 `episode-123`·`viewer.html` 처럼
+ * 뒤에 구분자가 붙은 것은 같은 것으로 본다.
+ */
+function pathMatches(pathname, words) {
+  const list = (words || "")
+    .split(/[\n,]/)
+    .map((x) => x.trim().toLowerCase().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  if (!list.length) return true; // 비워 두면 이 규칙을 안 쓴다
+  const segs = pathname.toLowerCase().split("/").filter(Boolean);
+  return segs.some((s) => list.some((w) => s === w || s.startsWith(w + "-") ||
+                                            s.startsWith(w + "_") || s.startsWith(w + ".")));
+}
+
 function hostMatches(host, list) {
   const h = host.toLowerCase();
   return list
@@ -2290,14 +2310,19 @@ function hostMatches(host, list) {
 
 async function maybeAutoEnable() {
   if (autoOn || !alive()) return;
-  let sites;
+  let cfg;
   try {
-    sites = (await chrome.storage.sync.get("autoSites")).autoSites;
+    cfg = await chrome.storage.sync.get(["autoSites", "autoSitesOn", "autoPaths"]);
   } catch {
     return;
   }
+  // **스위치가 내려가 있으면 목록을 보지 않는다.** 목록은 남겨 두고 끌 수 있어야
+  // 다시 켤 때 다시 적지 않는다.
+  if (!cfg.autoSitesOn) return;
+  const sites = cfg.autoSites;
   if (sites === undefined) return; // 아직 저장 전이면 background 기본값을 모른다
   if (!hostMatches(location.hostname, sites)) return;
+  if (!pathMatches(location.pathname, cfg.autoPaths)) return;
 
   // 뷰어가 실제로 있는지 본다. 없으면 목차 같은 페이지다.
   let probe;
@@ -2307,6 +2332,15 @@ async function maybeAutoEnable() {
     return;
   }
   if (!probe?.count) return;
+
+  // **화면을 채우고 있어야 뷰어다.** 주소 규칙만으로는 부족하다 — 뷰어 주소 안의
+  // 목차·표지 화면도 같은 주소를 쓴다. 만화를 읽는 중이면 그림이 화면 대부분을
+  // 차지한다. 홈페이지 배너는 폭만 넓고 낮아서 여기서 걸린다.
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const r = probe.rect;
+  if (r.height < vh * 0.6) return;
+  if (r.width * r.height < vw * vh * 0.25) return;
 
   // `silent` — 권한이 없어도 떠들지 않는다. 자동은 거들 뿐이고, 손으로 켜거나
   // Alt+Shift+M 을 누르면 그때 안내가 나간다.

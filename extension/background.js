@@ -25,6 +25,20 @@ const DEFAULTS = {
   ttsVoice: "",
   //: 번역 모델. 빈 값이면 서버의 `service.toml` 을 따른다.
   model: "",
+  //: 사이트 자동 켜기를 아예 끄는 스위치. 목록은 그대로 두고 내릴 수 있다 —
+  //: 다시 켤 때 사이트를 다시 적지 않아도 된다.
+  autoSitesOn: true,
+  //: **주소에 이 낱말이 들어가야 켠다.** 쉼표로 구분.
+  //:
+  //: 호스트만 보면 홈페이지에서도 켜졌다. 뷰어 판정(`probeViewer`)은 200px 넘는
+  //: 그림 하나면 통과하는데, 홈페이지 배너가 그대로 걸리기 때문이다.
+  //:
+  //: 주소 칸(`/episode/123`)을 `/` 로 자른 **한 칸과 통째로 같아야** 맞는 것으로
+  //: 본다. 일부만 겹치는 것은 안 친다 — `read` 가 `readme` 에 걸리면 곤란하다.
+  //: 다만 `episode-123` 처럼 뒤에 구분자가 붙은 것은 맞는 것으로 본다.
+  //:
+  //: 비우면 이 규칙을 안 쓴다 (호스트만 보던 예전 동작).
+  autoPaths: "viewer, episode, episodes, chapter, chapters, story, read, book, volume",
   //: 이 호스트들에서는 「자동」이 알아서 켜진다. 한 줄에 하나.
   //: 뒤에서부터 맞춘다 — `yanmaga.jp` 는 `www.yanmaga.jp` 에도 걸린다.
   autoSites: [
