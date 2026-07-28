@@ -1871,6 +1871,110 @@ function layoutLabels() {
 //: 라벨이 화면 가장자리에서 남길 여백.
 const LABEL_EDGE_PAD = 8;
 
+// ---------------------------------------------------------------------------
+// 라벨을 손으로 옮기기
+//
+// 자동 배치(`fitLabel` + `layoutLabels`)는 대부분 맞지만 늘 맞지는 않는다.
+// 그림의 중요한 곳을 가리거나, 좁은 칸에서 자리를 못 찾는 경우가 남는다.
+//
+// **라벨을 끌면 옮겨진다.** 옮긴 자리는 그 자리에 고정되고 자동 배치가 건드리지
+// 않는다. 더블클릭하면 자동으로 되돌린다.
+//
+// 박스가 아니라 **라벨**을 끈다 — 박스를 끄는 것은 「크기 조정」이 이미 쓴다.
+// ---------------------------------------------------------------------------
+
+let dragLabel = null;
+
+//: 이만큼은 움직여야 "옮겼다" 로 본다. 그냥 누른 것까지 고정하면, 라벨을 클릭할
+//: 때마다 자동 배치에서 빠져 나중에 자리가 엉킨다.
+const DRAG_THRESHOLD_PX = 3;
+
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    const label = e.target?.closest?.(".mlr-label");
+    // 왼쪽 버튼 + 라벨 위에서만. 크기 조정 손잡이와 겹치지 않게 그 상태는 뺀다.
+    if (!label || e.button !== 0 || label.closest(".mlr-resizing")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cur = readShift(label);
+    dragLabel = { el: label, x: e.clientX, y: e.clientY, dx: cur.dx, dy: cur.dy, moved: false };
+    label.setPointerCapture?.(e.pointerId);
+    label.classList.add("mlr-label-dragging");
+  },
+  true
+);
+
+document.addEventListener(
+  "pointermove",
+  (e) => {
+    if (!dragLabel) return;
+    e.preventDefault();
+    const mx = e.clientX - dragLabel.x;
+    const my = e.clientY - dragLabel.y;
+    if (!dragLabel.moved && Math.hypot(mx, my) < DRAG_THRESHOLD_PX) return;
+    dragLabel.moved = true;
+    applyShift(dragLabel.el, Math.round(dragLabel.dx + mx), Math.round(dragLabel.dy + my));
+  },
+  true
+);
+
+document.addEventListener(
+  "pointerup",
+  (e) => {
+    if (!dragLabel) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { el, moved } = dragLabel;
+    el.classList.remove("mlr-label-dragging");
+    if (moved) {
+      // 옮긴 자리를 기억하고 **자동 배치에서 빼 둔다.** 안 빼면 다음 번역이 도착할
+      // 때 원래 자리로 되돌아간다.
+      const t = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(el.style.transform || "");
+      el.dataset.dx = String(Math.round(Number(t?.[1] ?? 0)));
+      el.dataset.dy = String(Math.round(Number(t?.[2] ?? 0)));
+      el.dataset.pinned = "1";
+    }
+    dragLabel = null;
+  },
+  true
+);
+
+// 더블클릭하면 자동 배치로 되돌린다 — 잘못 옮겼을 때 되돌릴 길이 있어야 한다.
+document.addEventListener(
+  "dblclick",
+  (e) => {
+    const label = e.target?.closest?.(".mlr-label");
+    if (!label) return;
+    e.preventDefault();
+    e.stopPropagation();
+    delete label.dataset.pinned;
+    delete label.dataset.dy;
+    label.dataset.dx = "0";
+    layoutLabels();
+    status("라벨 자리를 되돌렸다");
+  },
+  true
+);
+
+/** 지금 걸린 이동량을 읽는다. */
+function readShift(label) {
+  return { dx: Number(label.dataset.dx || 0), dy: Number(label.dataset.dy || 0) };
+}
+
+/** 라벨의 가로·세로 이동을 한 `transform` 으로 합쳐 넣는다.
+ *
+ * 화면 안으로 밀어 넣는 것(`fitLabel`)과 겹침을 피해 내리는 것(`layoutLabels`)이
+ * 둘 다 `transform` 을 쓴다. 각자 대입하면 나중 것이 앞의 것을 지운다.
+ */
+function applyShift(label, dx, dy) {
+  label.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+}
+
+//: 라벨 폭의 하한·상한. 하한보다 좁아지면 글자가 세로로 한 자씩 떨어져 못 읽는다.
+const LABEL_MIN_WIDTH = 120;
+const LABEL_MAX_WIDTH = 340;
+
 /** 라벨이 화면 밖으로 나가지 않게 방향과 최대 폭을 정한다.
  *
  * 예전에는 `left: 0` 에 고정이고, 위로 붙일지는 **28px 어림값**으로 판단했다.
@@ -1885,28 +1989,55 @@ function fitLabel(box, label, panel) {
   const b = box.getBoundingClientRect();
 
   // **패널이 가린 폭도 화면 밖과 똑같이 취급한다.** 화면 안이라도 패널 아래로
-  // 들어가면 못 읽는다 — 실측 캡처에서 오른쪽 페이지 라벨이 패널에 잘렸다.
-  // 세로로 겹치는 구간에서만 따진다 (패널은 위쪽에만 있다).
+  // 들어가면 못 읽는다. 세로로 겹치는 구간에서만 따진다 (패널은 위쪽에만 있다).
   let rightEdge = vw;
   if (panel && b.top < panel.bottom && b.bottom > panel.top) {
     rightEdge = Math.min(rightEdge, panel.left);
   }
 
-  // 좌우: 왼쪽에 붙였을 때 화면을 넘으면 오른쪽 정렬로 바꾼다. 어느 쪽이든
-  // 쓸 수 있는 폭을 재서 최대 폭으로 준다 — 그래야 줄이 접혀서 다 보인다.
-  const roomRight = rightEdge - b.left - LABEL_EDGE_PAD;
-  const roomLeft = b.right - LABEL_EDGE_PAD;
-  const toLeft = roomRight < 140 && roomLeft > roomRight;
+  // -- 좌우 -------------------------------------------------------------------
+  //
+  // **폭 어림값(140px)으로 정하면 안 된다.** 예전에는 "오른쪽에 140px 미만이면
+  // 뒤집는다" 였는데, 라벨이 실제로 얼마나 넓은지와 무관한 숫자다. 짧은 번역은
+  // 140px 이하로도 들어가고, 긴 번역은 200px 이 남아도 넘친다 — 끝이 조금씩 잘렸다.
+  //
+  // 아래쪽처럼 **실제로 재서** 정한다: 한 번 놓아 보고, 넘치면 뒤집고, 그래도
+  // 넘치면 넘치는 만큼 밀어 넣는다.
+  const roomRight = Math.max(0, rightEdge - b.left - LABEL_EDGE_PAD);
+  const roomLeft = Math.max(0, b.right - LABEL_EDGE_PAD);
+
+  // 폭이 넓은 쪽으로 먼저 놓는다. 최대 폭은 그쪽으로 실제 쓸 수 있는 만큼.
+  const toLeft = roomLeft > roomRight;
   box.classList.toggle("mlr-label-left", toLeft);
+  label.dataset.dx = "0";
+  applyShift(label, 0, 0);
   label.style.setProperty(
     "--mlr-label-max",
-    `${Math.max(120, Math.min(340, toLeft ? roomLeft : roomRight))}px`
+    `${Math.max(LABEL_MIN_WIDTH, Math.min(LABEL_MAX_WIDTH, toLeft ? roomLeft : roomRight))}px`
   );
 
-  // 위아래: **실제 높이를 재고** 정한다. 여러 줄이면 어림값으로는 못 맞춘다.
+  // 재 보고 그래도 밖으로 나가면 그만큼 밀어 넣는다. 최대 폭을 줬어도 긴 단어
+  // 하나가 안 접히면(`overflow-wrap: anywhere` 로 웬만하면 접히지만) 넘칠 수 있고,
+  // 양쪽 다 좁으면 애초에 들어갈 자리가 없다.
+  const r = label.getBoundingClientRect();
+  let dx = 0;
+  if (r.right > rightEdge - LABEL_EDGE_PAD) dx = rightEdge - LABEL_EDGE_PAD - r.right;
+  if (r.left + dx < LABEL_EDGE_PAD) dx = LABEL_EDGE_PAD - r.left;
+  // **`transform` 을 직접 쓰지 않는다.** 겹침 배치(`layoutLabels`)도 같은 속성을
+  // 세로 이동에 쓰는데, 나중에 쓰는 쪽이 앞의 값을 지워 버린다. 두 값을 따로
+  // 들고 있다가 합쳐서 넣는다.
+  label.dataset.dx = String(Math.round(dx));
+  applyShift(label, Math.round(dx), 0);
+
+  // -- 위아래 -----------------------------------------------------------------
+  //
+  // 실제 높이를 재고 정한다. **위쪽 자리도 본다** — 아래가 모자라다고 무턱대고
+  // 위로 붙이면 화면 위로 넘치는 경우가 있다 (화면 아래쪽의 긴 번역).
   label.style.removeProperty("display");
   const h = label.getBoundingClientRect().height || 0;
-  box.classList.toggle("mlr-label-above", b.bottom + 2 + h > vh - LABEL_EDGE_PAD);
+  const fitsBelow = b.bottom + 2 + h <= vh - LABEL_EDGE_PAD;
+  const fitsAbove = b.top - 2 - h >= LABEL_EDGE_PAD;
+  box.classList.toggle("mlr-label-above", !fitsBelow && fitsAbove);
 }
 
 function doLayoutLabels() {
@@ -1920,7 +2051,9 @@ function doLayoutLabels() {
 
   // 접어 둔 상태에서는 마우스 올린 하나만 보이므로 겹칠 일이 없다. 되돌려 둔다.
   if (!root.classList.contains("mlr-show-all")) {
-    for (const l of labels) l.style.transform = "";
+    for (const l of labels) {
+      applyShift(l, Number(l.dataset.dx || 0), l.dataset.pinned ? Number(l.dataset.dy || 0) : 0);
+    }
     return;
   }
 
@@ -1940,7 +2073,6 @@ function doLayoutLabels() {
   const placed = [];
   const items = labels
     .map((l) => {
-      l.style.transform = "";
       // **겹침을 풀기 전에 화면 안으로 들어오게 한다.** 순서가 바뀌면 방향이
       // 바뀌면서 사각형이 달라져 겹침 계산이 어긋난다.
       const box = l.closest(".mlr-box");
@@ -1949,15 +2081,20 @@ function doLayoutLabels() {
     })
     .sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left);
 
-  for (const { l, r } of items) {
+  for (const { l, r, pinned } of items) {
     if (r.width === 0) continue;
+    // 손으로 옮긴 것은 자리만 차지하고 밀리지 않는다.
+    if (pinned) {
+      placed.push(r);
+      continue;
+    }
     let dy = 0;
     while (dy <= LABEL_MAX_SHIFT_PX && placed.some((p) => hit(p, shift(r, dy)))) {
       dy += LABEL_STEP_PX;
     }
     // 밀어낸 결과가 화면 밖이면 밀지 않는다 — 안 겹치게 하려다 아예 못 읽게 된다.
     if (dy > LABEL_MAX_SHIFT_PX || r.bottom + dy > window.innerHeight - LABEL_EDGE_PAD) dy = 0;
-    if (dy) l.style.transform = `translateY(${dy}px)`;
+    applyShift(l, Number(l.dataset.dx || 0), dy);
     placed.push(shift(r, dy));
   }
 }

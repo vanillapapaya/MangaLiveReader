@@ -567,3 +567,26 @@
 #mlr-overlay.mlr-hidden #mlr-busy {
   visibility: hidden;
 }
+
+/* 라벨을 끌어 옮길 수 있다 — 자동 배치가 늘 맞지는 않는다.
+   더블클릭하면 자동으로 되돌아간다. */
+.mlr-label {
+  cursor: grab;
+}
+
+.mlr-label.mlr-label-dragging {
+  cursor: grabbing;
+  /* 끄는 동안에는 안 사라진다. 라벨은 박스에 마우스가 올라가야 보이는데, 끌어서
+     박스 밖으로 나가면 `:hover` 가 풀려 손에 쥔 것이 없어진다. */
+  opacity: 1 !important;
+  outline: 1px solid rgba(255, 176, 32, 0.9);
+  /* 끄는 동안에는 다른 것 위로. 어디에 놓는지 보여야 한다. */
+  z-index: 20;
+}
+
+/* 손으로 옮긴 라벨은 표시를 남긴다 — 자동 배치가 안 건드린다는 것을 알 수 있어야
+   한다. 왼쪽에 가는 선 하나. */
+.mlr-label[data-pinned] {
+  border-left: 2px solid rgba(255, 176, 32, 0.75);
+  padding-left: 4px;
+}
