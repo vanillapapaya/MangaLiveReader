@@ -163,6 +163,8 @@ chrome.commands.onCommand.addListener((cmd, tab) => {
   }
   // 「갱신」 — 이 페이지의 낡은 캐시를 지우고 다시 읽는다. 결과가 이상할 때 쓴다.
   if (cmd === "refresh-page") ensureHost(tab).then(() => run(tab, null, null, { refresh: true }));
+  // 음성은 캡처가 필요 없다 — 이미 화면에 있는 번역을 읽는다. 권한도 필요 없다.
+  if (cmd === "speak-page") chrome.tabs.sendMessage(tab.id, { type: "speak-toggle" }).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

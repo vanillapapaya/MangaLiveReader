@@ -151,6 +151,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "select-region":
       startSelection();
       break;
+    case "speak-toggle":
+      if (speaking) stopSpeaking();
+      else speakAll();
+      break;
     case "stale":
       // 페이지가 바뀐 것이 확인됐다. 새 박스가 오기 전까지 **옛 번역을 치운다** —
       // 새 그림 위에 이전 페이지의 번역이 얹혀 있는 것이 가장 거슬린다.
@@ -564,23 +568,24 @@ function cancelSelection() {
 //: 툴팁은 브라우저 기본 `title` 을 쓰지 않는다. 뜨는 데 1초 넘게 걸리고 위치도
 //: 못 정해서, 마우스를 올린 순간 단축키를 알려 주는 용도로는 못 쓴다.
 const PANEL_BUTTONS = [
-  { act: "read", label: "번역", key: "Alt+Shift+M", desc: "이 페이지를 캡처해 번역한다 · Shift+클릭이면 캐시를 지우고 다시" },
-  { act: "select", label: "영역", key: "Alt+Shift+D", desc: "읽을 영역을 드래그로 고른다" },
-  { act: "auto", label: "자동", key: null, desc: "페이지가 넘어가면 알아서 다시 읽는다" },
+  { act: "read", label: "번역", key: "Alt+Shift+M", desc: "이 페이지 번역", sub: "Shift+클릭 — 캐시 무시하고 다시" },
+  { act: "select", label: "영역", key: "Alt+Shift+D", desc: "읽을 곳 직접 고르기", sub: "자동으로 못 찾을 때" },
+  { act: "auto", label: "자동", key: null, desc: "넘기면 알아서 번역" },
 ];
 
 const PANEL_MORE = [
-  { act: "fresh", label: "갱신", key: "Alt+Shift+R", desc: "이 페이지의 캐시를 지우고 다시 번역한다" },
-  { act: "speak", label: "음성", key: null, desc: "원문을 읽기 순서대로 소리내어 읽는다" },
-  { act: "labels", label: "라벨", key: "Alt+Shift+L", desc: "라벨 전체 펼치기/접기" },
-  { act: "extra", label: "효과음", key: "Alt+Shift+S", desc: "숨긴 효과음·잡문 보기" },
-  { act: "status", label: "상태", key: null, desc: "왼쪽 위 상태줄 켜기/끄기" },
-  { act: "hide", label: "숨김", key: "` (누르는 동안)", desc: "오버레이를 감춘다. 버튼은 고정, 백틱은 누르는 동안만" },
-  { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지의 캐시만 지운다 (다시 읽지는 않는다)" },
+  { act: "fresh", label: "갱신", key: "Alt+Shift+R", desc: "캐시 버리고 다시 번역", sub: "결과가 이상할 때" },
+  { act: "speak", label: "음성", key: "Alt+Shift+P", desc: "원문 소리내어 읽기" },
+  { act: "labels", label: "라벨", key: "Alt+Shift+L", desc: "번역 항상 보이기" },
+  { act: "extra", label: "효과음", key: "Alt+Shift+S", desc: "효과음·잡문도 보이기" },
+  { act: "status", label: "상태", key: null, desc: "왼쪽 위 진행 표시" },
+  { act: "hide", label: "숨김", key: "`", desc: "잠깐 걷어내고 그림 보기", sub: "백틱은 누르는 동안만" },
+  { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지 캐시만 버리기", sub: "다시 읽지는 않는다" },
 ];
 
 const btnHtml = (b) =>
   `<button data-act="${b.act}" data-desc="${escapeHtml(b.desc)}"` +
+  (b.sub ? ` data-sub="${escapeHtml(b.sub)}"` : "") +
   (b.key ? ` data-key="${escapeHtml(b.key)}"` : "") +
   `>${b.label}</button>`;
 
@@ -725,9 +730,13 @@ function bindPanel(root) {
   panel.addEventListener("pointerover", (e) => {
     const b = e.target?.closest?.("button[data-desc]");
     if (!b) return;
+    // 한 줄에 다 넣으면 길어져 만화를 가린다. 짧은 설명 + 단축키를 한 줄에 두고,
+    // 부연은 아래 작은 글씨로 내린다.
     tip.innerHTML =
-      `<span class="mlr-tip-desc">${escapeHtml(b.dataset.desc)}</span>` +
-      (b.dataset.key ? `<kbd>${escapeHtml(b.dataset.key)}</kbd>` : "");
+      `<span class="mlr-tip-main">${escapeHtml(b.dataset.desc)}` +
+      (b.dataset.key ? `<kbd>${escapeHtml(b.dataset.key)}</kbd>` : "") +
+      `</span>` +
+      (b.dataset.sub ? `<span class="mlr-tip-sub">${escapeHtml(b.dataset.sub)}</span>` : "");
     tip.hidden = false;
     // 그 버튼 높이에 맞춰 놓는다 — 어느 버튼 설명인지 눈으로 이어져야 한다.
     tip.style.top = `${b.offsetTop}px`;

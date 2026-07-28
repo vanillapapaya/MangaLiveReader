@@ -45,6 +45,10 @@
     "refresh-page": {
       "suggested_key": { "default": "Alt+Shift+R" },
       "description": "이 페이지의 캐시를 지우고 다시 번역한다"
+    },
+    "speak-page": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "원문을 읽기 순서대로 소리내어 읽는다"
     }
   },
 

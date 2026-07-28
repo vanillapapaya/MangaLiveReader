@@ -447,8 +447,9 @@
   position: absolute;
   right: calc(100% + 6px);
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
   padding: 5px 9px;
   background: rgba(20, 20, 24, 0.96);
   color: #d8d8dc;
@@ -461,6 +462,18 @@
 
 #mlr-tip[hidden] {
   display: none;
+}
+
+#mlr-tip .mlr-tip-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 부연은 작고 흐리게 — 없어도 되는 정보라는 것이 보여야 한다. */
+#mlr-tip .mlr-tip-sub {
+  font-size: 11px;
+  color: #9a9aa2;
 }
 
 #mlr-tip kbd {
