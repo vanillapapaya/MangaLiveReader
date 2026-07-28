@@ -390,18 +390,70 @@ class GeminiTranslator:
     def translate_stream(
         self, regions: list[Region], style: str, previous: list[str] | None = None
     ) -> TranslationStream:
-        """폴백 구현. 다 받은 뒤 한꺼번에 낸다.
+        """완성된 말풍선부터 하나씩 흘린다 (Anthropic 쪽과 같은 방식).
 
-        `google-genai` 의 스트리밍 API 는 확인하지 않았다. Anthropic 으로 확정했으므로
-        (REVIEW.md) 여기에 시간을 쓰지 않는다. 인터페이스는 맞춰 두었으니 Gemini 로
-        돌아갈 일이 생기면 이 메서드만 채우면 된다.
+        예전에는 다 받은 뒤 한꺼번에 냈다. 전체 시간은 비슷하지만 **첫 번역이 뜨는
+        시각**이 다르다 — 실측에서 스트리밍이 9.8초 → 4.8초로 줄였다.
+
+        SDK 이벤트 구조 (실측):
+
+            StepStart   {step: {type: "thought"}}      ← 사고 단계
+            StepDelta   {delta: {signature: "..."}}    ← 텍스트가 아니다. 거른다
+            StepStop
+            StepStart   {step: {type: "model_output"}}
+            StepDelta   {delta: {text: "{\n  \"regions\":", type: "text"}}
+            StepDelta   {delta: {text: " [...]"}}
+            StepStop
+            InteractionCompletedEvent {interaction: {... usage ...}}
+
+        `delta.type == "text"` 만 받아 `ArrayStreamer` 에 흘린다 — Anthropic 과 같은
+        파서다. 사고 델타를 같이 넣으면 JSON 이 깨진다.
         """
         stream = TranslationStream(_iter=iter(()))
 
         def run() -> Iterator[TranslatedRegion]:
-            res = self.translate(regions, style, previous)
-            stream.result = res
-            yield from res.regions
+            t0 = time.perf_counter()
+            parser = ArrayStreamer("regions")
+            seen: set[int] = set()
+            usage = (0, 0, 0)
+            sse = self._client.interactions.create(
+                model=self.model,
+                system_instruction=PROMPTS[style],
+                input=build_input(regions, previous),
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": RESPONSE_SCHEMA,
+                },
+                stream=True,
+            )
+            for ev in sse:
+                delta = getattr(ev, "delta", None)
+                if delta is not None and getattr(delta, "type", None) == "text":
+                    for obj in parser.feed(getattr(delta, "text", "") or ""):
+                        rid = int(obj["id"])
+                        if rid in seen:  # 방어: 같은 id 를 두 번 그리지 않는다
+                            continue
+                        seen.add(rid)
+                        yield TranslatedRegion(
+                            id=rid,
+                            ko=obj.get("ko", ""),
+                            kind=_kind(obj),
+                            note=obj.get("note", ""),
+                        )
+                # 마지막 이벤트에 사용량이 실려 온다.
+                got = getattr(ev, "interaction", None)
+                if got is not None:
+                    usage = _gemini_usage(got)
+
+            stream.result = TranslateResult(
+                regions=[],  # 이미 흘려보냈다
+                model=self.model,
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+                input_tokens=usage[0],
+                output_tokens=usage[1],
+                cached_tokens=usage[2],
+            )
 
         stream._iter = run()
         return stream

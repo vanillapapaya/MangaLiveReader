@@ -1360,3 +1360,54 @@ if (!st || st.busy) return;   // ← 그냥 버린다
 
 **교훈: "이 경우엔 거의 확실하다" 는 근거는 재보고 쓸 것.** 클릭 중 몇 %가 넘김인지
 세어 보지도 않고 최적화를 넣었다가, 고쳐 놓은 것을 다시 깨뜨렸다.
+
+
+---
+
+## Gemini 스트리밍 — "모델 차이" 가 아니라 내가 안 만든 것
+
+"제미나이는 한번에 번역하네, 이거 제미나이와 클로드의 차이야?" — **아니다.**
+`GeminiTranslator.translate_stream` 이 폴백이었다:
+
+```python
+"""폴백 구현. 다 받은 뒤 한꺼번에 낸다.
+
+`google-genai` 의 스트리밍 API 는 확인하지 않았다. Anthropic 으로 확정했으므로
+여기에 시간을 쓰지 않는다."""
+```
+
+Anthropic 으로 확정한 뒤 Gemini 는 인터페이스만 맞춰 뒀는데, 테스트용으로 다시 쓰게
+되면서 드러났다.
+
+### SDK 이벤트 구조 (실측)
+
+`create(..., stream=True)` 가 `Stream[InteractionSSEEvent]` 를 준다.
+
+```
+StepStart   {step: {type: "thought"}}       ← 사고 단계
+StepDelta   {delta: {signature: "..."}}     ← 텍스트가 아니다. 거른다
+StepStop
+StepStart   {step: {type: "model_output"}}
+StepDelta   {delta: {text: "{\n  \"regions\":", type: "text"}}
+StepDelta   {delta: {text: " [...]"}}
+StepStop
+InteractionCompletedEvent {interaction: {... usage ...}}
+```
+
+**사고 델타를 같이 넣으면 JSON 이 깨진다** — `delta.type == "text"` 만 받는다.
+그 뒤는 Anthropic 과 똑같이 `ArrayStreamer` 에 흘리면 된다.
+
+토큰 사용량은 마지막 이벤트의 `interaction` 에 실려 온다.
+
+### 실측
+
+| | 첫 번역 | 전체 |
+|---|---|---|
+| 전 (한꺼번에) | 10.3초 | 10.3초 |
+| 후 (스트리밍) | **6.5초** | 10.3초 |
+
+전체 시간은 그대로고 **첫 번역이 뜨는 시각**이 앞당겨진다. Anthropic 때 9.8 → 4.8초와
+같은 종류의 개선이다.
+
+**교훈: "프로바이더 차이" 로 보이는 것이 내 구현 차이일 수 있다.** 폴백을 남겨 둘 때는
+그것이 나중에 기본 경로가 될 수 있다는 것을 염두에 둘 것.
