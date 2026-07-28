@@ -221,6 +221,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const old = document.querySelector('.mlr-box[data-replacing="1"]');
         if (old) {
           if (drawn > 0) {
+            // **치웠다는 사실을 남긴다.** 이게 없어서 다음 전체 읽기 때 캐시가
+            // 원래 박스를 되돌려 놓고, 그 위에 고친 박스까지 복원돼 겹쳤다.
+            markRemoved(old);
             old.remove();
           } else {
             delete old.dataset.replacing;
@@ -990,6 +993,10 @@ function drawBoxes(regions) {
         nw: p.width / vrect.width,
         nh: p.height / vrect.height,
       });
+      // **처음 자리는 따로 박아 둔다.** `n` 은 손으로 크기를 바꾸면 갱신되는데,
+      // 캐시가 다음에 돌려주는 것은 언제나 처음 자리다. 지웠다고 적을 때 이 값을
+      // 써야 캐시가 돌려준 원래 박스와 맞출 수 있다 (markRemoved 참고).
+      div.dataset.n0 = div.dataset.n;
     }
     // 원문을 남겨 둔다. 번역이 도착하면 라벨을 덮어쓰므로, 보관하지 않으면
     // "원문 보기" 를 할 수가 없다.
@@ -1055,11 +1062,7 @@ function openMenu(box, x, y) {
     closeMenu();
     if (act === "remove") {
       // 되돌아왔을 때 다시 지우려면 어디였는지 남겨야 한다.
-      const v = viewerRect();
-      if (v) {
-        const n = toNorm(box, v);
-        removedMarks.push({ cx: n.nx + n.nw / 2, cy: n.ny + n.nh / 2 });
-      }
+      markRemoved(box);
       box.remove();
       saveEdits();
       status("영역 지움");
@@ -1654,6 +1657,30 @@ function fromNorm(a, v) {
   };
 }
 
+/** 이 박스가 있던 자리를 "지운 자리" 로 적어 둔다.
+ *
+ * **적어 두지 않으면 다음 전체 읽기에서 되살아난다.** 캐시는 페이지 해시로 잡히므로
+ * 내가 박스를 고쳐도 서버는 처음 검출 결과를 그대로 돌려준다. 그 위에 손으로 고친
+ * 박스까지 복원되니 둘이 겹쳐서 번역이 두 겹으로 나왔다.
+ *
+ * 크기를 바꾼 뒤 다시 읽는 경우가 있어 지금 자리(`n`)가 아니라 **처음 자리**(`n0`)로
+ * 적는다. 캐시가 돌려주는 것이 그 자리다.
+ */
+function markRemoved(box) {
+  let n;
+  try {
+    n = JSON.parse(box.dataset.n0 || box.dataset.n || "");
+  } catch {
+    return;
+  }
+  if (!n) return;
+  const cx = n.nx + n.nw / 2;
+  const cy = n.ny + n.nh / 2;
+  // 같은 자리를 여러 번 다시 읽어도 기록은 하나면 된다
+  if (removedMarks.some((m) => Math.abs(m.cx - cx) < 0.01 && Math.abs(m.cy - cy) < 0.01)) return;
+  removedMarks.push({ cx, cy });
+}
+
 async function saveEdits() {
   const v = viewerRect();
   if (!pageKey || !v) return;
@@ -1714,6 +1741,7 @@ async function restoreEdits() {
     div.dataset.ko = a.ko;
     div.dataset.kind = a.kind;
     div.dataset.n = JSON.stringify({ nx: a.nx, ny: a.ny, nw: a.nw, nh: a.nh });
+    div.dataset.n0 = div.dataset.n;
     if (a.kind === "sfx" || a.kind === "extra") div.classList.add(`mlr-kind-${a.kind}`);
     Object.assign(div.style, {
       left: `${p.left}px`, top: `${p.top}px`,
