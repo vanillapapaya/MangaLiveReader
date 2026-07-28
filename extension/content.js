@@ -727,8 +727,19 @@ function bindPanel(root) {
         send({ type: "purge-page" });
         break;
       case "more": {
-        const rest = root.querySelector("#mlr-panel .mlr-rest");
-        rest.hidden = !rest.hidden;
+        // 접힌 상태에서 누르면 **펼친 채로 고정**한다 (마우스를 떼도 안 접힌다).
+        // 나머지 기능을 쓰려면 손이 패널을 벗어나야 하는 경우가 있다.
+        const panel = root.querySelector("#mlr-panel");
+        const rest = panel.querySelector(".mlr-rest");
+        if (!panel.classList.contains("mlr-pinned")) {
+          panel.classList.add("mlr-pinned");
+          rest.hidden = false;
+        } else if (rest.hidden) {
+          rest.hidden = false;
+        } else {
+          rest.hidden = true;
+          panel.classList.remove("mlr-pinned");
+        }
         syncPanel();
         break;
       }
@@ -750,6 +761,10 @@ function syncPanel() {
   on("status", !root.classList.contains("mlr-hide-status"));
   on("speak", speaking);
   on("more", !root.querySelector("#mlr-panel .mlr-rest")?.hidden);
+  // 접혀 있을 때도 "뭔가 켜져 있다" 는 것은 보여야 한다 (특히 「자동」).
+  const anyOn = autoOn || root.classList.contains("mlr-show-all")
+    || root.classList.contains("mlr-show-extra") || speaking;
+  root.querySelector('#mlr-panel [data-act="more"]')?.classList.toggle("mlr-has-on", anyOn);
   on("hide", root.classList.contains("mlr-hidden"));
 }
 
@@ -1766,14 +1781,22 @@ const LABEL_EDGE_PAD = 8;
  *
  * **실제 크기를 재서 정한다.**
  */
-function fitLabel(box, label) {
+function fitLabel(box, label, panel) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const b = box.getBoundingClientRect();
 
+  // **패널이 가린 폭도 화면 밖과 똑같이 취급한다.** 화면 안이라도 패널 아래로
+  // 들어가면 못 읽는다 — 실측 캡처에서 오른쪽 페이지 라벨이 패널에 잘렸다.
+  // 세로로 겹치는 구간에서만 따진다 (패널은 위쪽에만 있다).
+  let rightEdge = vw;
+  if (panel && b.top < panel.bottom && b.bottom > panel.top) {
+    rightEdge = Math.min(rightEdge, panel.left);
+  }
+
   // 좌우: 왼쪽에 붙였을 때 화면을 넘으면 오른쪽 정렬로 바꾼다. 어느 쪽이든
   // 쓸 수 있는 폭을 재서 최대 폭으로 준다 — 그래야 줄이 접혀서 다 보인다.
-  const roomRight = vw - b.left - LABEL_EDGE_PAD;
+  const roomRight = rightEdge - b.left - LABEL_EDGE_PAD;
   const roomLeft = b.right - LABEL_EDGE_PAD;
   const toLeft = roomRight < 140 && roomLeft > roomRight;
   box.classList.toggle("mlr-label-left", toLeft);
@@ -1803,6 +1826,13 @@ function doLayoutLabels() {
     return;
   }
 
+  // 패널 사각형은 한 번만 잰다 — 라벨마다 재면 강제 레이아웃이 그만큼 는다.
+  const panelEl = root.querySelector("#mlr-panel");
+  const panelRect =
+    panelEl && getComputedStyle(panelEl).display !== "none"
+      ? panelEl.getBoundingClientRect()
+      : null;
+
   const hit = (a, b) =>
     a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
   const shift = (r, dy) => ({
@@ -1816,7 +1846,7 @@ function doLayoutLabels() {
       // **겹침을 풀기 전에 화면 안으로 들어오게 한다.** 순서가 바뀌면 방향이
       // 바뀌면서 사각형이 달라져 겹침 계산이 어긋난다.
       const box = l.closest(".mlr-box");
-      if (box) fitLabel(box, l);
+      if (box) fitLabel(box, l, panelRect);
       return { l, r: l.getBoundingClientRect() };
     })
     .sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left);
