@@ -335,6 +335,10 @@ async function setAuto(tab, on, silent = false) {
     const st = (await loadState(tab.id)) ?? { lastHash: null, lastAt: 0, timer: null, busy: false };
     watching.set(tab.id, st);
     saveState(tab.id, st);
+    // **켜자마자 한 번 본다.** 켜기만 하면 신호(클릭·키·DOM 변화)를 기다리는데,
+    // 페이지가 이미 다 그려진 뒤라면 그런 신호가 영영 안 온다 — 사이트에 들어가도
+    // 자동 번역이 안 걸리고, 손으로 한 번 눌러야 그때부터 돈다.
+    schedule(tab, true);
   } else {
     const st = watching.get(tab.id);
     if (st) clearTimeout(st.timer);

@@ -583,10 +583,38 @@ const PANEL_MORE = [
   { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지 캐시만 버리기", sub: "다시 읽지는 않는다" },
 ];
 
+// ---------------------------------------------------------------------------
+// 단축키 표기
+//
+// `manifest.json` 은 `Alt+Shift+M` 하나만 적어 두면 Chrome 이 플랫폼에 맞춰
+// 매핑한다 — macOS 에서 `Alt` 는 `Option(⌥)` 이다. **동작은 알아서 맞는데 화면에
+// 적힌 글자는 안 바뀐다.** 맥에서 「Alt+Shift+M」 을 보면 어느 키인지 한 번 더
+// 생각해야 한다.
+//
+// 보이는 쪽만 그 플랫폼의 기호로 바꾼다.
+// ---------------------------------------------------------------------------
+
+const IS_MAC = /Mac|iPhone|iPad/i.test(
+  navigator.userAgentData?.platform || navigator.platform || navigator.userAgent
+);
+
+const MAC_KEYS = { Alt: "⌥", Shift: "⇧", Ctrl: "⌃", Control: "⌃", Cmd: "⌘", Meta: "⌘" };
+
+/** `Alt+Shift+M` → 맥이면 `⌥⇧M`, 아니면 그대로. */
+function keyLabel(k) {
+  if (!k || !IS_MAC) return k;
+  // 「` (누르는 동안)」 처럼 조합키가 아닌 것은 건드리지 않는다.
+  if (!k.includes("+")) return k;
+  return k
+    .split("+")
+    .map((part) => MAC_KEYS[part.trim()] ?? part.trim())
+    .join("");
+}
+
 const btnHtml = (b) =>
   `<button data-act="${b.act}" data-desc="${escapeHtml(b.desc)}"` +
   (b.sub ? ` data-sub="${escapeHtml(b.sub)}"` : "") +
-  (b.key ? ` data-key="${escapeHtml(b.key)}"` : "") +
+  (b.key ? ` data-key="${escapeHtml(keyLabel(b.key))}"` : "") +
   `>${b.label}</button>`;
 
 const PANEL_HTML = `
