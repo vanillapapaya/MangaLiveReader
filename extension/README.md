@@ -602,6 +602,9 @@ CSS 변수(`--mlr-label-size`) 하나로 둔다. 전체 펼침(`Alt+Shift+L`)은
    일부만 겹치는 것은 안 친다 (`read` 가 `readme` 에 걸리면 곤란하다).
    `episode-123`·`viewer.html` 처럼 뒤에 구분자가 붙은 것은 같은 것으로 본다.
    보는 사이트가 다른 낱말을 쓰면 옵션 화면에서 더한다. **비우면 이 규칙을 안 쓴다.**
+   기본 목록으로 실측 확인한 것: yanmaga `/viewer/comics/…`, comic-walker
+   `/detail/…/episodes/…`, shonenjumpplus·sunday-webry `/episode/…`,
+   comic-fuz `/manga/viewer/…`, ichijin-plus `/episodes/…`.
 3. **화면을 채우고 있다** — 그림이 화면 높이의 60%, 넓이의 25% 이상.
    주소만으로는 부족하다: 뷰어 주소 안의 목차·표지 화면도 같은 주소를 쓴다.
 

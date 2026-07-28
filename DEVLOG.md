@@ -1488,6 +1488,21 @@ if (r.width < 200 || r.height < 200) continue;
 사이트마다 낱말이 달라서 **목록을 설정으로 뺐다.** 내가 아는 주소만 박아 두면 내가
 모르는 사이트에서 조용히 안 켜진다. 비우면 규칙을 안 쓴다.
 
+실측한 주소:
+
+| 사이트 | 뷰어 | 목차·메인 |
+|---|---|---|
+| yanmaga.jp | `/viewer/comics/<작품>/<해시>` | `/comics/<작품>`, `/`, `/ranking` |
+| comic-walker.com | `/detail/<id>/episodes/<id>` | |
+| shonenjumpplus.com | `/episode/<id>.html` | |
+| sunday-webry.com | `/episode/<id>` | |
+| comic-fuz.com | `/manga/viewer/<id>` | |
+| ichijin-plus.com | `/episodes/<id>` | |
+
+yanmaga 는 목차가 `/comics/`, 뷰어가 `/viewer/comics/` 라 **앞칸 하나로 갈린다.**
+칸 단위로 비교한 것이 여기서 값을 한다 — 부분 문자열이었으면 목차도 `comics` 로
+걸릴 뻔했다. 퍼센트 인코딩된 일본어 제목(`%E7%89%9B…`)은 칸 나누기에 영향이 없다.
+
 **화면 점유.** 주소만으로는 부족하다 — 뷰어 주소 안의 목차·표지 화면도 같은 주소를
 쓴다. 만화를 읽는 중이면 그림이 화면 대부분을 차지한다:
 
