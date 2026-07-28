@@ -729,6 +729,7 @@ try {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     if (changes.labelSize) applyLabelSize();
+    if (changes.ttsUrl) serverTts = null; // 폴백 판단을 다시 하게 한다
     // 다른 탭에서 토글을 누르면 여기도 따라간다 — 탭마다 다르면 헷갈린다.
     if (Object.keys(STICKY_TOGGLES).some((k) => changes[k]) || changes.panelPinned) {
       applyToggles();
@@ -1198,9 +1199,14 @@ async function pickVoice(lang) {
  * **원문(일본어)을 우선한다.** 번역은 눈으로 보면 되고, 귀로 듣고 싶은 것은 원문이다 —
  * 말투·억양은 번역문이 아니라 원문에 있다. 눈은 한국어, 귀는 일본어.
  *
- * **다만 일본어 음성이 없으면 번역문을 읽는다.** 윈도우는 일본어 TTS 가 기본으로
- * 안 깔려 있다 (실측: Heami/ko, Zira·David/en 뿐). 그대로 두면 윈도우에서 음성이
- * 통째로 무음이 된다 — 안 읽는 것보다 번역문이라도 읽는 게 낫다.
+ * **다만 브라우저에 일본어 음성이 없고 서버도 없으면** 번역문을 읽는다. 윈도우는
+ * 일본어 TTS 가 기본으로 안 깔려 있다 (실측: Heami/ko, Zira·David/en 뿐). 그대로 두면
+ * 윈도우에서 통째로 무음이 된다 — 안 읽는 것보다 번역문이라도 읽는 게 낫다.
+ *
+ * **순서를 틀리면 안 된다.** 예전에는 브라우저 음성만 보고 곧바로 번역문으로 내렸다.
+ * 그러면 음성 서버는 일본어를 읽을 수 있는데도 **물어보지도 않고** 한국어를 받는다 —
+ * 윈도우에서 번역문이 읽히던 이유다. 서버가 설정돼 있으면 원문을 그대로 들고 가고,
+ * 서버까지 실패한 뒤에야 `fallbackSpeech()` 로 내린다.
  */
 async function resolveSpeech(box) {
   const ja = (box.dataset.ja || "").trim();
@@ -1209,12 +1215,34 @@ async function resolveSpeech(box) {
   if (ja) {
     const v = await pickVoice("ja-JP");
     if (v) return { text: ja, lang: "ja-JP", voice: v };
+    // 서버가 읽어 줄 수 있다. 여기서 내리면 서버에 기회가 안 간다.
+    if (await hasTtsServer()) return { text: ja, lang: "ja-JP", voice: null, needsServer: true };
     if (ko) {
       return { text: ko, lang: "ko-KR", voice: await pickVoice("ko-KR"), fellBack: true };
     }
     return { text: ja, lang: "ja-JP", voice: null }; // 기본 음성에 맡긴다
   }
   return { text: ko, lang: "ko-KR", voice: await pickVoice("ko-KR") };
+}
+
+/** 음성 서버가 설정돼 있는가. 매번 저장소를 읽지 않게 한 번만 본다
+ *  (옵션에서 주소를 바꾸면 `storage.onChanged` 가 지운다). */
+let serverTts = null;
+async function hasTtsServer() {
+  if (serverTts !== null) return serverTts;
+  try {
+    serverTts = Boolean((await chrome.storage.sync.get("ttsUrl")).ttsUrl?.trim());
+  } catch {
+    serverTts = false;
+  }
+  return serverTts;
+}
+
+/** 서버까지 안 됐을 때 마지막으로 번역문으로 내린다. 없으면 null. */
+async function fallbackSpeech(box) {
+  const ko = (box.dataset.ko || "").trim();
+  if (!ko) return null;
+  return { text: ko, lang: "ko-KR", voice: await pickVoice("ko-KR"), fellBack: true };
 }
 
 /** 읽을 글이 있는가만 볼 때 쓴다 (음성 조회 없이 빠르게). */
@@ -1356,22 +1384,27 @@ async function noJapaneseReason() {
   const v = await loadVoices();
   if (!v.length) return "브라우저가 음성을 하나도 못 봤다 — 브라우저를 완전히 껐다 켤 것";
   const langs = [...new Set(v.map((x) => x.lang.split(/[-_]/)[0]))].sort().join(" ");
-  return `일본어 음성이 없어 번역문을 읽는다 (있는 언어: ${langs} · 브라우저 재시작 필요할 수 있음)`;
+  const how = navigator.userAgent.includes("Windows")
+    ? "설정 → 시간 및 언어 → 언어 → 일본어 추가(음성 포함) 후 브라우저 재시작"
+    : "시스템 설정에서 일본어 음성을 추가할 것";
+  return `일본어 음성이 없어 번역문을 읽는다 (있는 언어: ${langs}) — ${how}`;
 }
 
 async function speakOne(box) {
   if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
-  const { text, lang, voice, fellBack } = await resolveSpeech(box);
-  if (!text) return;
-  const url = await ttsFetch(text, lang);
+  let s = await resolveSpeech(box);
+  if (!s.text) return;
+  const url = await ttsFetch(s.text, s.lang);
   if (url && (await playAudio(url))) return;
   if (ttsLastError) status(`음성 서버 실패: ${ttsLastError}`, true);
-  if (fellBack) status(await noJapaneseReason());
-  else if (!voice) {
+  // 서버를 믿고 원문을 골랐는데 서버가 안 됐다. **이제야** 번역문으로 내린다.
+  if (s.needsServer) s = (await fallbackSpeech(box)) || s;
+  if (s.fellBack) status(await noJapaneseReason());
+  else if (!s.voice) {
     const n = (await loadVoices()).length;
-    status(`${lang} 음성이 없다 (설치된 음성 ${n}개). 시스템 설정에서 추가할 것`, true);
+    status(`${s.lang} 음성이 없다 (설치된 음성 ${n}개). 시스템 설정에서 추가할 것`, true);
   }
-  await say(text, lang, voice);
+  await say(s.text, s.lang, s.voice);
 }
 
 /** 페이지 전체를 읽기 순서대로. id 순서가 곧 읽기 순서다 (order.py 가 정한 것). */
@@ -1398,7 +1431,7 @@ async function speakAll() {
   status(
     useServer
       ? "음성: 서버 (GPT-SoVITS)"
-      : first.fellBack
+      : first.fellBack || first.needsServer
         ? await noJapaneseReason()
         : first.voice
           ? `음성: ${first.voice.name}`
@@ -1427,7 +1460,9 @@ async function speakAll() {
       const played = ready ? await playAudio(ready) : false;
       if (!played && cur.text) {
         if (ready && ttsLastError) status(`${ttsLastError} — 내장 음성으로 읽는다`, true);
-        await say(cur.text, cur.lang, cur.voice);
+        // 서버를 믿고 원문을 골랐는데 서버가 안 됐다 — 여기서 번역문으로 내린다.
+        const f = cur.needsServer ? (await fallbackSpeech(box)) || cur : cur;
+        await say(f.text, f.lang, f.voice);
       }
     } finally {
       box.classList.remove("mlr-speaking");
