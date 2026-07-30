@@ -254,11 +254,14 @@ _ANTHROPIC_EFFORT_MODELS = ("claude-opus-", "claude-sonnet-5", "claude-sonnet-4-
 class AnthropicTranslator:
     """Anthropic Messages API. 키는 `ANTHROPIC_API_KEY` 에서 SDK 가 직접 읽는다."""
 
-    def __init__(self, model: str, effort: str = "medium", max_tokens: int = 8000) -> None:
+    def __init__(
+        self, model: str, effort: str = "medium", max_tokens: int = 8000,
+        api_key: str | None = None,
+    ) -> None:
         import anthropic
 
         load_local_env()
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        if not (api_key or os.environ.get("ANTHROPIC_API_KEY")):
             raise RuntimeError(
                 "ANTHROPIC_API_KEY 가 없다. 환경변수나 키 파일에 넣을 것 "
                 "(scripts/check_keys.py 로 확인)."
@@ -266,7 +269,7 @@ class AnthropicTranslator:
         self.model = model
         self._effort = effort
         self._max_tokens = max_tokens
-        self._client = anthropic.Anthropic()
+        self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
     def _request_kwargs(self, regions: list[Region], style: str, previous) -> dict:
         output_config: dict = {"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}}
@@ -350,11 +353,11 @@ class AnthropicTranslator:
 class GeminiTranslator:
     """Google Gemini API. 키는 `GEMINI_API_KEY` 에서 SDK 가 직접 읽는다."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, api_key: str | None = None) -> None:
         from google import genai
 
         load_local_env()
-        if not os.environ.get("GEMINI_API_KEY"):
+        if not (api_key or os.environ.get("GEMINI_API_KEY")):
             raise RuntimeError(
                 "GEMINI_API_KEY 가 없다. 환경변수나 키 파일에 넣을 것 "
                 "(scripts/check_keys.py 로 확인)."
@@ -363,7 +366,7 @@ class GeminiTranslator:
         # 클라이언트는 **반드시 들고 있어야 한다.** `genai.Client().interactions...`
         # 처럼 임시 객체로 쓰면 호출 도중 GC 되면서 내부 httpx 클라이언트가 닫히고
         # "Cannot send a request, as the client has been closed" 가 난다.
-        self._client = genai.Client()
+        self._client = genai.Client(api_key=api_key) if api_key else genai.Client()
 
     def translate(
         self, regions: list[Region], style: str, previous: list[str] | None = None
@@ -486,14 +489,106 @@ def _gemini_usage(interaction: object) -> tuple[int, int, int]:
 
 
 # ---------------------------------------------------------------------------
+# OpenAI
+#
+# **미검증.** 키가 없어 실제 호출을 못 해 봤다. Anthropic/Gemini 는 실측 있음.
+#
+# 스트리밍을 붙이지 않았다. 한 번에 받고 통째로 흘린다 — 말풍선이 하나씩 올라오는
+# 이득은 없지만 결과는 같다. 실제로 쓰게 되면 그때 붙일 것.
+# ---------------------------------------------------------------------------
+
+
+class OpenAITranslator:
+    """OpenAI Chat Completions. 키는 `OPENAI_API_KEY` 또는 인자."""
+
+    def __init__(
+        self, model: str, api_key: str | None = None, base_url: str | None = None
+    ) -> None:
+        from openai import OpenAI
+
+        load_local_env()
+        # 로컬 엔드포인트(Ollama 등)는 키를 안 본다. SDK 가 빈 키를 거부하므로 채워 준다.
+        if base_url and not api_key:
+            api_key = os.environ.get("OPENAI_API_KEY") or "local"
+        if not (api_key or os.environ.get("OPENAI_API_KEY")):
+            raise RuntimeError(
+                "OPENAI_API_KEY 가 없다. 환경변수나 키 파일에 넣을 것 "
+                "(scripts/check_keys.py 로 확인)."
+            )
+        self.model = model
+        self._client = OpenAI(
+            **({"api_key": api_key} if api_key else {}),
+            **({"base_url": base_url} if base_url else {}),
+        )
+
+    def translate(
+        self, regions: list[Region], style: str, previous: list[str] | None = None
+    ) -> TranslateResult:
+        t0 = time.perf_counter()
+        resp = self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": PROMPTS[style]},
+                {"role": "user", "content": build_input(regions, previous)},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "translation", "schema": RESPONSE_SCHEMA, "strict": False},
+            },
+        )
+        latency = int((time.perf_counter() - t0) * 1000)
+        payload = json.loads(resp.choices[0].message.content or "{}")
+        u = resp.usage
+        usage = (
+            getattr(u, "prompt_tokens", 0) or 0,
+            getattr(u, "completion_tokens", 0) or 0,
+            getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0,
+        )
+        return _parse(payload, self.model, latency, usage)
+
+    def translate_stream(
+        self, regions: list[Region], style: str, previous: list[str] | None = None
+    ) -> TranslationStream:
+        res = self.translate(regions, style, previous)
+        stream = TranslationStream(iter(res.regions))
+        stream.result = res
+        return stream
+
+
+# ---------------------------------------------------------------------------
 # 선택
 # ---------------------------------------------------------------------------
 
 
-def get_translator(model: str, **kwargs) -> Translator:
-    """모델 이름으로 프로바이더를 고른다."""
+#: 모델 이름 앞머리 → 키 환경변수. 확장이 보낸 키를 어느 칸에서 꺼낼지도 이걸 따른다.
+PROVIDER_ENV = {
+    "claude-": "ANTHROPIC_API_KEY",
+    "gemini-": "GEMINI_API_KEY",
+    "gpt-": "OPENAI_API_KEY",
+}
+
+
+def provider_of(model: str) -> str:
+    """`claude-sonnet-5` → `claude-`. 모르면 빈 문자열."""
+    for prefix in PROVIDER_ENV:
+        if model.startswith(prefix):
+            return prefix
+    return ""
+
+
+def get_translator(
+    model: str, api_key: str | None = None, base_url: str | None = None, **kwargs
+) -> Translator:
+    """모델 이름으로 프로바이더를 고른다.
+
+    `api_key` 를 주면 환경변수 대신 그것을 쓴다 (확장이 보낸 키).
+    `base_url` 은 OpenAI 호환 로컬 엔드포인트용 (Ollama 등).
+    """
     if model.startswith("claude-"):
-        return AnthropicTranslator(model, **kwargs)
+        return AnthropicTranslator(model, api_key=api_key, **kwargs)
     if model.startswith("gemini-"):
-        return GeminiTranslator(model)
+        return GeminiTranslator(model, api_key=api_key)
+    if model.startswith("gpt-") or base_url:
+        # base_url 이 있으면 이름이 무엇이든 OpenAI 호환으로 본다 (gemma-4-12b 등).
+        return OpenAITranslator(model, api_key=api_key, base_url=base_url)
     raise ValueError(f"어느 프로바이더인지 모르겠다: {model!r}")

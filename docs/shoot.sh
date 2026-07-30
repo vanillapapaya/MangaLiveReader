@@ -34,10 +34,14 @@ shoot 'docs\demo.html' 1280,1200 demo.png
   document.getElementById("autositeson").checked = true;
   document.getElementById("autopaths").value = "viewer, episode, chapter";
   document.getElementById("ttsurl").value = "";
+  // 키 칸은 비워 둔다. 실제 값은 물론이고 그럴듯한 가짜도 넣지 않는다.
+  for (const id of ["key-anthropic", "key-gemini", "key-openai"]) {
+    document.getElementById(id).value = "";
+  }
 </script>
 JS
 } > docs/.shot-options.html
-shoot 'docs\.shot-options.html' 860,1180 options.png
+shoot 'docs\.shot-options.html' 860,1500 options.png
 rm -f docs/.shot-options.html
 
 ls -l docs/demo.png docs/options.png

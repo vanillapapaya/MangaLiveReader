@@ -2,6 +2,10 @@
 const DEFAULTS = {
   serviceUrl: "http://127.0.0.1:8788/read",
   authToken: "",
+  //: 번역 키. 고른 모델에 맞는 것 하나만 background 가 보낸다.
+  keyAnthropic: "",
+  keyGemini: "",
+  keyOpenai: "",
   ttsUrl: "",
   ttsVoice: "",
   autoSites: "",
@@ -13,6 +17,11 @@ const DEFAULTS = {
 
 const url = document.getElementById("url");
 const token = document.getElementById("token");
+const keys = {
+  keyAnthropic: document.getElementById("key-anthropic"),
+  keyGemini: document.getElementById("key-gemini"),
+  keyOpenai: document.getElementById("key-openai"),
+};
 const saved = document.getElementById("saved");
 const ttsurl = document.getElementById("ttsurl");
 const ttsvoice = document.getElementById("ttsvoice");
@@ -52,6 +61,7 @@ chrome.storage.sync.get(Object.keys(DEFAULTS)).then((got) => {
   const v = { ...DEFAULTS, ...got };
   url.value = v.serviceUrl;
   token.value = v.authToken;
+  for (const [k, el] of Object.entries(keys)) el.value = v[k] || "";
   ttsurl.value = v.ttsUrl;
   autosites.value = v.autoSites;
   autositeson.checked = Boolean(v.autoSitesOn);
@@ -183,6 +193,9 @@ document.getElementById("save").addEventListener("click", async () => {
   await chrome.storage.sync.set({
     serviceUrl: value,
     authToken: token.value.trim(),
+    keyAnthropic: keys.keyAnthropic.value.trim(),
+    keyGemini: keys.keyGemini.value.trim(),
+    keyOpenai: keys.keyOpenai.value.trim(),
     ttsUrl: tts,
     ttsVoice: ttsvoice.value,
     autoSites: autosites.value,

@@ -118,6 +118,11 @@ class ApiConfig:
     model_quality: str = "claude-sonnet-5"
     #: Anthropic 모델의 `effort`. Haiku 4.5 처럼 안 받는 모델에는 자동으로 안 보낸다.
     effort: str = "low"
+    #: 로컬 모델. 확장이 「로컬 모델」을 고르면 이 이름으로 부른다 (예: "gemma-4-12b").
+    local_model: str = ""
+    #: OpenAI 호환 엔드포인트. Ollama 는 http://<주소>:11434/v1
+    #: 둘 다 채워야 로컬이 동작한다. 비어 있으면 로컬을 고를 수 없다.
+    local_base_url: str = ""
 
 
 @dataclass(slots=True)

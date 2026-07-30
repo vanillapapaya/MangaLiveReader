@@ -19,7 +19,12 @@
 // 권한을 요청한다.
 const DEFAULTS = {
   serviceUrl: "http://127.0.0.1:8788/read",
-  authToken: "", // service.toml 의 auth_disabled = false 로 바꾸면 채운다
+  authToken: "", // 서비스의 MTL_AUTH_TOKEN 과 같은 값. 기본 설정에서는 비워 둔다
+  //: 번역 키. **비워 두는 것이 기본이다** — 서비스 쪽 키 파일을 쓴다.
+  //: 넣으면 고른 모델에 맞는 것 하나만 `X-Api-Key` 로 나간다.
+  keyAnthropic: "",
+  keyGemini: "",
+  keyOpenai: "",
   // 음성 합성 서버 (GPT-SoVITS). 비우면 브라우저 내장 음성을 쓴다.
   ttsUrl: "",
   ttsVoice: "",
@@ -97,6 +102,16 @@ async function ttsSpeak(text, lang) {
     bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
   }
   return btoa(bin);
+}
+
+/** 고른 모델에 맞는 키. 모델을 안 골랐으면(서버 설정) 보내지 않는다 —
+ *  어느 프로바이더인지 확장이 알 수 없어서 엉뚱한 키를 보내게 된다. */
+function keyFor(model, s) {
+  if (!model) return "";
+  if (model.startsWith("claude-")) return s.keyAnthropic || "";
+  if (model.startsWith("gemini-")) return s.keyGemini || "";
+  if (model.startsWith("gpt-")) return s.keyOpenai || "";
+  return ""; // 로컬 모델 등 — 키가 필요 없다
 }
 
 async function settings() {
@@ -601,7 +616,9 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     //    같은 원문을 두 번 넣는 꼴이므로 부분 읽기에서는 보내지 않는다.
     const prevPage = override ? null : await getPrevPage(tab.id);
     // 한 번만 읽는다 — 아래 fetch 에서도 같은 값을 쓴다.
-    const { serviceUrl, authToken, model } = await settings();
+    const s = await settings();
+    const { serviceUrl, authToken, model } = s;
+    const apiKey = keyFor(model, s);
     const meta = {
       phash,
       profile: hostToProfile(tab.url),
@@ -640,7 +657,7 @@ async function run(tab, override = null, prepared = null, opts = {}) {
 
     let resp;
     try {
-      resp = await postWithRetry(serviceUrl, form, authToken, say);
+      resp = await postWithRetry(serviceUrl, form, authToken, say, apiKey);
     } catch (err) {
       // fetch 가 통째로 실패하면 브라우저가 이유를 안 알려 준다 (서비스가 죽었는지,
       // 방화벽인지, host_permissions 가 없는지 구분 불가). 짚을 곳을 알려 준다.
@@ -796,7 +813,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * **재시도하면 안 되는 것은 구별한다.** 400(잘못된 요청)·401(인증)은 다시 해도
  * 같은 답이 온다. 5xx 와 네트워크 오류만 다시 한다.
  */
-async function postWithRetry(url, form, authToken, say) {
+async function postWithRetry(url, form, authToken, say, apiKey) {
   let lastErr;
   for (let i = 0; i <= RETRY_DELAYS_MS.length; i++) {
     if (i > 0) {
@@ -807,7 +824,11 @@ async function postWithRetry(url, form, authToken, say) {
       const resp = await fetch(url, {
         method: "POST",
         body: form,
-        headers: authToken ? { "X-Auth-Token": authToken } : {},
+        headers: {
+          ...(authToken ? { "X-Auth-Token": authToken } : {}),
+          // 고른 모델에 맞는 키. 없으면 안 보낸다 — 서비스가 자기 키를 쓴다.
+          ...(apiKey ? { "X-Api-Key": apiKey } : {}),
+        },
       });
       // 4xx 는 우리가 잘못 보낸 것이다. 다시 해도 같으니 바로 올린다.
       if (resp.ok || (resp.status >= 400 && resp.status < 500)) return resp;

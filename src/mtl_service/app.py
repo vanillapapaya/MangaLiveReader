@@ -63,18 +63,45 @@ _inflight: dict[tuple[str, str, str], asyncio.Event] = {}
 
 
 #: 클라이언트가 아무 문자열이나 보내는 것을 그대로 쓰면 안 된다. 아는 것만 받는다.
-ALLOWED_MODELS = ("claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "gemini-3.6-flash")
+ALLOWED_MODELS = (
+    "claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "gemini-3.6-flash", "gpt-5.2",
+)
+#: 확장이 보내는 특별한 값. 실제 이름은 `[api].local_model` 이 정한다.
+LOCAL_MODEL = "local"
 
 
 def resolve_model(requested: str | None) -> str:
     """요청이 고른 모델. 모르는 값이면 설정값으로 떨어진다."""
+    if requested == LOCAL_MODEL and cfg.api.local_model and cfg.api.local_base_url:
+        return cfg.api.local_model
     if requested and requested in ALLOWED_MODELS:
         return requested
     return cfg.api.model_quality
 
 
-async def get_translator(model: str | None = None) -> translate.Translator | None:
+def base_url_for(model: str) -> str | None:
+    """로컬 모델이면 엔드포인트, 아니면 None."""
+    return cfg.api.local_base_url or None if model == cfg.api.local_model else None
+
+
+async def get_translator(
+    model: str | None = None, api_key: str | None = None
+) -> translate.Translator | None:
+    """번역기를 준다. 없으면 None (OCR 만 돌린다).
+
+    확장이 키를 보내면(`X-Api-Key`) 그 키로 **매번 새로 만든다.** 캐시하지 않는다 —
+    사람마다 키가 다른데 모델 이름으로만 캐시하면 남의 키로 부르게 된다.
+    """
     name = resolve_model(model)
+    if api_key:
+        try:
+            kwargs = {"effort": cfg.api.effort} if name.startswith("claude-") else {}
+            return translate.get_translator(
+                name, api_key=api_key, base_url=base_url_for(name), **kwargs
+            )
+        except Exception as exc:
+            print(f"[warn] 보내 온 키로 {name} 번역기를 못 만들었다: {exc}")
+            return None
     got = _translators.get(name)
     if got is not None:
         return got
@@ -83,7 +110,9 @@ async def get_translator(model: str | None = None) -> translate.Translator | Non
             return _translators[name]
         try:
             kwargs = {"effort": cfg.api.effort} if name.startswith("claude-") else {}
-            _translators[name] = translate.get_translator(name, **kwargs)
+            _translators[name] = translate.get_translator(
+                name, base_url=base_url_for(name), **kwargs
+            )
         except Exception as exc:  # 키 없음 등
             print(f"[warn] {name} 번역기를 못 만들었다 — OCR 만 제공한다: {exc}")
             return None
@@ -234,7 +263,11 @@ def sse(event: str, data: object) -> str:
 
 
 @app.post("/read", dependencies=[Depends(require_token)])
-async def read(image: UploadFile = File(...), meta: str = Form(...)) -> StreamingResponse:
+async def read(
+    image: UploadFile = File(...),
+    meta: str = Form(...),
+    x_api_key: str | None = Header(default=None),
+) -> StreamingResponse:
     """DESIGN.md §4.1. 좌표는 전부 **전송된 이미지 좌표계** 기준으로 돌려준다.
 
     입력 검증은 스트림을 열기 **전에** 끝낸다. 잘못된 요청에 200 + `event: error` 를
@@ -251,7 +284,7 @@ async def read(image: UploadFile = File(...), meta: str = Form(...)) -> Streamin
         raise HTTPException(400, "이미지 디코드 실패")
 
     return StreamingResponse(
-        _read_events(img, parsed, len(payload)),
+        _read_events(img, parsed, len(payload), x_api_key),
         media_type="text/event-stream",
         # 프록시가 버퍼링하면 스트리밍이 의미를 잃는다. Tailscale 직결이라 지금은
         # 프록시가 없지만, 나중에 하나라도 끼면 조용히 망가진다.
@@ -259,7 +292,9 @@ async def read(image: UploadFile = File(...), meta: str = Form(...)) -> Streamin
     )
 
 
-async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
+async def _read_events(
+    img: np.ndarray, parsed: ReadMeta, upload_bytes: int, api_key: str | None = None
+):
     """`cached` → `ocr` → `translation`* → `done` 순서로 흘린다."""
     t_start = time.perf_counter()
     try:
@@ -349,7 +384,7 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
             _inflight[key] = done_evt
             t0 = time.perf_counter()
             try:
-                async for kind, payload in _translate_stream(to_translate, parsed):
+                async for kind, payload in _translate_stream(to_translate, parsed, api_key):
                     if kind == "usage":
                         usage = payload
                         continue
@@ -400,14 +435,16 @@ async def _read_events(img: np.ndarray, parsed: ReadMeta, upload_bytes: int):
         yield sse("error", {"stage": "read", "message": f"{type(exc).__name__}: {exc}"})
 
 
-async def _translate_stream(regions: list[dict[str, object]], parsed: ReadMeta):
+async def _translate_stream(
+    regions: list[dict[str, object]], parsed: ReadMeta, api_key: str | None = None
+):
     """번역 스트림을 async 로 중계한다. `("region", {...})` 또는 `("error", "메시지")`.
 
     SDK 스트림은 **동기 제너레이터**다. 이벤트 루프에서 직접 소진하면 9초 동안 서버
     전체가 멈춘다. 별도 스레드에서 돌리고 큐로 건네받는다 — 스레드가 `put` 할 때는
     `call_soon_threadsafe` 를 써야 한다 (asyncio.Queue 는 스레드 안전하지 않다).
     """
-    translator = await get_translator(parsed.model)
+    translator = await get_translator(parsed.model, api_key)
     if translator is None:
         yield "error", "번역기가 없다 (API 키 미설정)"
         return

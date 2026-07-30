@@ -26,23 +26,42 @@
 <label for="url">서비스 주소</label>
 <input id="url" type="url" spellcheck="false" />
 <p class="hint">
-  서비스는 Tailscale 인터페이스에만 바인딩한다. 서비스가 도는 머신의 브라우저에서도
-  <code>127.0.0.1</code> 로는 못 붙으니 Tailscale 주소를 쓸 것.
-  <br />주소를 바꾸면 <code>manifest.json</code> 의 <code>host_permissions</code> 에도
-  같은 호스트를 넣고 확장을 다시 읽어야 한다.
+  같은 기계에 띄웠으면 기본값 그대로 두면 됨 (<code>http://127.0.0.1:8788/read</code>).
+  <br />다른 기기에서 붙을 때만 서비스 기동 로그에 찍힌 Tailscale 주소로 바꿈.
+  저장하면 그 주소의 권한을 물어보는데, 허용하지 않으면 CORS 로 막힘.
 </p>
 
 <label for="token">인증 토큰</label>
 <input id="token" type="password" spellcheck="false" placeholder="(비어 있으면 안 보낸다)" />
 <p class="hint">
-  <code>service.toml</code> 의 <code>[server].auth_token</code> 과 같아야 한다.
-  <code>auth_disabled = true</code> 인 동안은 비워 둬도 된다.
+  서비스 쪽 <code>MTL_AUTH_TOKEN</code> 과 같은 값. 기본 설정
+  (<code>auth_disabled = true</code>)에서는 비워 둠. 다른 기기에서 붙을 때만 필요.
+</p>
+
+<h2 style="margin-top:32px;font-size:15px">번역 키 (선택)</h2>
+<p class="hint">
+  <b>서비스 쪽에 키를 넣어 뒀으면 비워 둘 것.</b> 여기 넣으면 그 키가 요청마다 서비스로
+  가고, 서비스는 그것으로 번역함 (저장하지 않음). 파일을 못 만지는 기기에서 쓰는 칸.
+  <br />고른 모델에 맞는 칸 하나만 쓰임 — Claude 를 고르면 Claude 키만 감.
+</p>
+
+<label for="key-anthropic">Claude (Anthropic)</label>
+<input id="key-anthropic" type="password" spellcheck="false" placeholder="sk-ant-..." />
+
+<label for="key-gemini" style="margin-top:12px">Gemini (Google)</label>
+<input id="key-gemini" type="password" spellcheck="false" placeholder="AIza..." />
+
+<label for="key-openai" style="margin-top:12px">ChatGPT (OpenAI)</label>
+<input id="key-openai" type="password" spellcheck="false" placeholder="sk-..." />
+<p class="hint">
+  키는 이 브라우저의 확장 저장소에만 있음. 확장을 지우면 같이 사라짐.
+  <b>공용 PC 에서는 넣지 말 것.</b>
 </p>
 
 <h2 style="margin-top:32px;font-size:15px">번역 글씨 크기</h2>
 <p class="hint">
-  말풍선 위에 뜨는 번역문의 크기. 기기마다 체감이 달라서 고정하면 누군가는 불편하다.
-  <br /><b>바꾸면 열려 있는 페이지에도 바로 반영된다</b> — 새로고침하지 않아도 된다.
+  말풍선 위에 뜨는 번역문 크기. 기기마다 체감이 달라 고정하면 누군가는 불편함.
+  <br />바꾸면 열려 있는 페이지에도 바로 반영됨. 새로고침 안 해도 됨.
 </p>
 <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
   <input id="labelsize" type="range" min="9" max="20" step="1" value="12" style="flex:1" />
@@ -61,29 +80,32 @@
   <option value="claude-sonnet-5">Claude Sonnet 5 — 품질·비용 균형</option>
   <option value="claude-opus-5">Claude Opus 5 — 가장 좋지만 비싸다</option>
   <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 싸다</option>
+  <option value="gpt-5.2">ChatGPT (GPT-5.2) — 미검증</option>
+  <option value="local">로컬 모델 — 서비스의 [api].local_model 을 따름 (돈 안 듦)</option>
 </select>
 <p class="hint">
-  실측(200쪽 1권): Sonnet 5 <b>$1.64</b> · Gemini 3.6 Flash <b>$2.44</b>.
-  단가는 Gemini 가 절반인데 사고 토큰이 3.3배라 실제로는 더 든다 — 무료 크레딧이
-  있을 때만 이득이다. 자세한 것은 <code>README.md</code>.
-  <br /><b>바꾸면 그 페이지를 다시 읽어야 반영된다</b> — 이미 번역된 것은 캐시에서 나온다.
+  실측(200쪽 1권): Sonnet 5 <b>$1.64</b>, Gemini 3.6 Flash <b>$2.44</b>. 단가는 Gemini 가
+  절반인데 사고 토큰이 3.3배라 실제로는 더 듦. 무료 크레딧이 있을 때만 이득.
+  <br />로컬 모델은 서비스 쪽 <code>[api].local_base_url</code> 을 채워야 뜸 (Ollama 등).
+  돈은 안 들지만 품질은 재보고 정할 것.
+  <br />바꾸면 그 페이지를 다시 읽어야 반영됨. 이미 번역된 것은 캐시에서 나옴.
 </p>
 
 <h2 style="margin-top:32px;font-size:15px">자동으로 켜질 사이트</h2>
 <p class="hint">
-  여기 적은 사이트에서는 「자동」이 알아서 켜진다 — 페이지를 넘기면 다시 번역한다.
+  여기 적은 사이트에서는「자동」이 알아서 켜짐 (페이지를 넘기면 다시 번역).
   한 줄에 하나. 뒤에서부터 맞추므로 <code>yanmaga.jp</code> 는
-  <code>www.yanmaga.jp</code> 에도 걸린다.
-  <br /><b>뷰어가 실제로 있을 때만 켜진다</b> — 목차 페이지에서는 안 켜진다.
+  <code>www.yanmaga.jp</code> 에도 걸림.
+  <br />뷰어가 실제로 있을 때만 켜짐. 목차 페이지에서는 안 켜짐.
 </p>
 <label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-weight:600">
   <input id="autositeson" type="checkbox" style="width:auto;margin:0" />
   사이트에서 자동으로 켜기
 </label>
 <p class="hint">
-  자동 실행에는 사용자 조작이 없어서 권한 팝업을 띄울 수가 없다. 권한이 빠져 있으면
-  페이지를 열자마자 조용히 실패하므로, 사이트를 더한 뒤에는 <b>한 번 「저장」</b> 을
-  눌러 허용해 둘 것.
+  자동 실행에는 사용자 조작이 없어 권한 팝업을 띄울 수 없음. 권한이 빠져 있으면
+  페이지를 열자마자 조용히 실패하므로, 사이트를 더한 뒤에는 한 번 「저장」을 눌러
+  허용해 둘 것.
 </p>
 
 <label for="autopaths" style="margin-top:16px">주소에 이 낱말이 있을 때만</label>

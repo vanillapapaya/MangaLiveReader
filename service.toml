@@ -102,6 +102,19 @@ min_gap_ratio = 0.015
 # `service.local.toml` 에 적는다 — 이 파일을 고치면 커밋에 섞인다.
 model_fast = "claude-sonnet-5"
 model_quality = "claude-sonnet-5"
+
+# 로컬 모델. 확장 옵션에서 「로컬 모델」을 고르면 이 이름으로 부른다.
+# 둘 다 채워야 동작하고, 비어 있으면 그 선택은 무시된다 (서버 기본 모델로 떨어짐).
+#
+#   ollama pull gemma-4-12b
+#   local_model = "gemma-4-12b"
+#   local_base_url = "http://100.x.y.z:11434/v1"
+#
+# OpenAI 호환 엔드포인트면 무엇이든 된다 (Ollama, LM Studio, vLLM).
+# **품질은 재보고 정할 것.** scripts/ab_translate.py 가 그 용도다.
+# GPU 를 OCR 과 같은 카드에서 돌리면 SM 경합으로 OCR 지연이 흔들린다 — 별 기계 권장.
+local_model = ""
+local_base_url = ""
 # Anthropic 모델의 effort. low/medium 이 지연 차이가 거의 없었고(둘 다 8-9초)
 # medium 에서 오히려 품질이 흔들린 적이 있어 low 로 둔다.
 effort = "low"

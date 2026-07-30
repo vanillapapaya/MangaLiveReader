@@ -129,10 +129,10 @@ def test_번역_실패해도_원문은_나가고_done_으로_끝난다(client, m
     c, cache = client
     cache.put_ocr("c" * 16, "jumpplus", OCR_ROWS)  # 번역은 없음
 
-    # `get_translator(model)` 로 바뀌었다 (설정에서 모델을 바꿀 수 있게 되면서).
-    # 인자를 안 받으면 TypeError 가 나고, 그건 번역 실패가 아니라 스트림 전체를
-    # 죽여 `done` 이 안 나간다 — 이 테스트가 바로 그것을 잡았다.
-    async def no_translator(model=None):
+    # `get_translator(model, api_key)` 로 바뀌었다 (모델 선택, 그다음 확장이 보내는
+    # 키). 인자를 안 받으면 TypeError 가 나고, 그건 번역 실패가 아니라 스트림 전체를
+    # 죽여 `done` 이 안 나간다. 이 테스트가 두 번 다 그것을 잡았다.
+    async def no_translator(model=None, api_key=None):
         return None
 
     monkeypatch.setattr(app_module, "get_translator", no_translator)
@@ -154,7 +154,7 @@ def test_모드가_다르면_번역을_다시_한다(client, monkeypatch) -> Non
 
     called: list[str] = []
 
-    async def fake(regions, parsed):
+    async def fake(regions, parsed, *_):
         called.append(parsed.mode)
         yield "region", {"id": 1, "ko": "직역문", "note": None}
 
@@ -182,7 +182,7 @@ def test_번역이_도착하는_대로_흘러간다(client, monkeypatch) -> None
     c, cache = client
     cache.put_ocr("e" * 16, "jumpplus", OCR_ROWS)
 
-    async def three(regions, parsed):
+    async def three(regions, parsed, *_):
         for i in (1, 2, 3):
             yield "region", {"id": i, "ko": f"번역{i}", "note": None}
 
@@ -203,7 +203,7 @@ def test_중간에_끊겨도_받은_만큼은_캐시한다(client, monkeypatch) 
     c, cache = client
     cache.put_ocr("f" * 16, "jumpplus", OCR_ROWS)
 
-    async def partial(regions, parsed):
+    async def partial(regions, parsed, *_):
         yield "region", {"id": 1, "ko": "첫번째", "note": None}
         yield "error", "연결 끊김"
 
