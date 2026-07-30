@@ -28,7 +28,7 @@ from mtl_shared.models import Region  # noqa: E402
 
 def main() -> int:
     cfg = load()
-    img_path = ROOT / "docs" / "_page.png"
+    img_path = ROOT / (sys.argv[1] if len(sys.argv) > 1 else "docs/_page.png")
     img = cv2.imread(str(img_path))
     if img is None:
         raise SystemExit(f"이미지를 못 읽었다: {img_path}")
@@ -75,13 +75,14 @@ def main() -> int:
             for r in regions
         ],
     }
-    dest = ROOT / "docs" / "demo-result.json"
+    stem = "demo" if img_path.name == "_page.png" else img_path.stem.lstrip("_")
+    dest = ROOT / "docs" / f"{stem}-result.json"
     dest.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     # file:// 에서는 fetch 가 막힌다. demo.html 이 <script src> 로 읽게 JS 로도 낸다.
-    js = ROOT / "docs" / "demo-result.js"
+    js = ROOT / "docs" / f"{stem}-result.js"
     js.write_text(
         "// docs/run_demo.py 가 만든다. 손으로 고치지 말 것.\n"
-        "window.MLR_RESULT = " + json.dumps(out, ensure_ascii=False, indent=1) + ";\n",
+        f"window.MLR_RESULT_{stem.upper()} = " + json.dumps(out, ensure_ascii=False, indent=1) + ";\n",
         encoding="utf-8",
     )
     print(f"→ {dest}\n→ {js}")
