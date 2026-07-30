@@ -491,10 +491,10 @@ def _gemini_usage(interaction: object) -> tuple[int, int, int]:
 # ---------------------------------------------------------------------------
 # OpenAI
 #
-# **미검증.** 키가 없어 실제 호출을 못 해 봤다. Anthropic/Gemini 는 실측 있음.
+# ChatGPT 와 **OpenAI 호환 로컬 서버**(Ollama, LM Studio, vLLM)가 같은 길로 온다.
 #
-# 스트리밍을 붙이지 않았다. 한 번에 받고 통째로 흘린다 — 말풍선이 하나씩 올라오는
-# 이득은 없지만 결과는 같다. 실제로 쓰게 되면 그때 붙일 것.
+# 로컬(Ollama · gemma4:e4b)로는 실측했다 — 스키마 6/6, 페이지당 10-12초.
+# **OpenAI 본가는 미검증이다** (키가 없어 호출을 못 해 봤다).
 # ---------------------------------------------------------------------------
 
 
@@ -549,9 +549,72 @@ class OpenAITranslator:
     def translate_stream(
         self, regions: list[Region], style: str, previous: list[str] | None = None
     ) -> TranslationStream:
-        res = self.translate(regions, style, previous)
-        stream = TranslationStream(iter(res.regions))
-        stream.result = res
+        """완성된 말풍선부터 하나씩 흘린다 (Anthropic·Gemini 와 같은 방식).
+
+        델타가 그냥 문자열 조각이라 이쪽이 가장 단순하다 — `choices[0].delta.content`
+        를 그대로 `ArrayStreamer` 에 밀어 넣으면 된다. 사고 델타를 걸러 낼 일도 없다.
+
+        **usage 를 받으려면 따로 청해야 한다.** OpenAI 호환 스트림은 기본적으로
+        usage 를 안 준다. `stream_options={"include_usage": True}` 를 붙이면 마지막
+        청크에 실려 오는데, 로컬 서버 중에는 이 옵션을 모르는 것도 있다 — 그때는
+        토큰 수가 0 으로 남을 뿐 번역은 정상이다.
+        """
+        stream = TranslationStream(_iter=iter(()))
+
+        def run() -> Iterator[TranslatedRegion]:
+            t0 = time.perf_counter()
+            parser = ArrayStreamer("regions")
+            seen: set[int] = set()
+            usage = (0, 0, 0)
+            sse = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": PROMPTS[style]},
+                    {"role": "user", "content": build_input(regions, previous)},
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "translation", "schema": RESPONSE_SCHEMA, "strict": False,
+                    },
+                },
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+            for chunk in sse:
+                for choice in chunk.choices or ():
+                    piece = getattr(choice.delta, "content", None)
+                    if not piece:
+                        continue
+                    for obj in parser.feed(piece):
+                        rid = int(obj["id"])
+                        if rid in seen:  # 방어: 같은 id 를 두 번 그리지 않는다
+                            continue
+                        seen.add(rid)
+                        yield TranslatedRegion(
+                            id=rid,
+                            ko=obj.get("ko", ""),
+                            kind=_kind(obj),
+                            note=obj.get("note", ""),
+                        )
+                u = getattr(chunk, "usage", None)
+                if u is not None:
+                    usage = (
+                        getattr(u, "prompt_tokens", 0) or 0,
+                        getattr(u, "completion_tokens", 0) or 0,
+                        getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0,
+                    )
+
+            stream.result = TranslateResult(
+                regions=[],  # 이미 흘려보냈다
+                model=self.model,
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+                input_tokens=usage[0],
+                output_tokens=usage[1],
+                cached_tokens=usage[2],
+            )
+
+        stream._iter = run()
         return stream
 
 
