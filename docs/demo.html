@@ -1,0 +1,133 @@
+<!doctype html>
+<!--
+  README 용 합성 스크린샷 원본.
+
+  **실제 만화가 아니다.** 저작물을 저장소에 넣지 않기 위해(DESIGN.md §15) 칸과
+  말풍선을 직접 그렸다. 대사도 여기서 지어낸 것이다.
+
+  오버레이는 진짜다 — `extension/overlay.css` 를 그대로 불러 쓰고, DOM 구조도
+  `content.js` 가 만드는 것과 같다 (#mlr-overlay > #mlr-status · #mlr-boxes ·
+  #mlr-panel, .mlr-box[.mlr-translated|.mlr-sfx] > .mlr-label).
+
+  찍는 법: docs/shoot.sh
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../extension/overlay.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #1b1c1f; }
+  body { font-family: "Malgun Gothic", "Segoe UI", sans-serif; }
+
+  /* 뷰어 흉내 — 어두운 바탕 가운데 흰 페이지 하나 */
+  .viewer { position: absolute; left: 190px; top: 24px; width: 900px; height: 1152px;
+            background: #fbfbf9; box-shadow: 0 0 0 1px #000, 0 8px 40px rgba(0,0,0,.6); }
+  .panel { position: absolute; background: #fff; border: 3px solid #111; overflow: hidden; }
+
+  /* 칸 안의 그림 — 실루엣과 효과선으로만 채운다 */
+  .sky   { position: absolute; inset: 0; background: linear-gradient(#eef2f6, #fff); }
+  .tone  { position: absolute; inset: 0;
+           background: radial-gradient(#0000 45%, #0002 46%) 0 0/7px 7px; }
+  .speed { position: absolute; inset: 0;
+           background: repeating-linear-gradient(72deg, #0000 0 9px, #1113 9px 10px); }
+  .figure { position: absolute; bottom: 0; background: #15171b; }
+  .head   { position: absolute; border-radius: 50%; background: #15171b; }
+  .horizon { position: absolute; left: 0; right: 0; border-top: 3px solid #111; }
+
+  /* 말풍선 */
+  .bal { position: absolute; background: #fff; border: 3px solid #111; border-radius: 50%;
+         display: grid; place-items: center; }
+  .bal.sq { border-radius: 10px; }
+  .bal span { writing-mode: vertical-rl; font-family: "Yu Gothic", "Meiryo", serif;
+              font-size: 21px; line-height: 1.5; letter-spacing: .06em; color: #111; }
+  .tail { position: absolute; width: 0; height: 0; border: 14px solid transparent; border-top-color: #111; }
+
+  /* 효과음 — 굵은 글씨 */
+  .sfx { position: absolute; font-family: "Yu Gothic", serif; font-weight: 900;
+         font-size: 54px; color: #111; -webkit-text-stroke: 6px #fff; paint-order: stroke; }
+</style>
+</head>
+<body>
+
+<div class="viewer">
+  <!-- ① 오른쪽 위 -->
+  <div class="panel" style="left:462px; top:24px; width:414px; height:330px">
+    <div class="sky"></div><div class="tone"></div>
+    <div class="horizon" style="top:232px"></div>
+    <div class="figure" style="left:64px; width:46px; height:150px"></div>
+    <div class="head" style="left:60px; bottom:146px; width:54px; height:54px"></div>
+    <div class="figure" style="right:78px; width:52px; height:126px"></div>
+    <div class="head" style="right:72px; bottom:122px; width:60px; height:60px"></div>
+    <div class="bal" data-ko="또 여기서 만날 줄이야" style="left:150px; top:26px; width:150px; height:112px"><span>またここで<br>会うとはな</span></div>
+  </div>
+
+  <!-- ② 왼쪽 위 -->
+  <div class="panel" style="left:24px; top:24px; width:414px; height:330px">
+    <div class="sky"></div><div class="speed"></div>
+    <div class="head" style="left:150px; bottom:60px; width:120px; height:120px"></div>
+    <div class="bal sq" data-ko="아직 얘기 안 끝났어" style="right:24px; top:30px; width:120px; height:150px"><span>まだ話は<br>終わってない</span></div>
+  </div>
+
+  <!-- ③ 오른쪽 아래 (넓은 칸) -->
+  <div class="panel" style="left:24px; top:378px; width:852px; height:396px">
+    <div class="sky"></div><div class="tone"></div>
+    <div class="horizon" style="top:300px"></div>
+    <div class="figure" style="left:210px; width:60px; height:196px"></div>
+    <div class="head" style="left:204px; bottom:190px; width:72px; height:72px"></div>
+    <div class="figure" style="right:250px; width:54px; height:168px"></div>
+    <div class="head" style="right:244px; bottom:162px; width:66px; height:66px"></div>
+    <div class="sfx" data-ko="쿵" data-kind="sfx" style="left:392px; top:186px">ドッ</div>
+    <div class="bal" data-ko="오늘은 돌아가겠다" style="right:36px; top:34px; width:168px; height:126px"><span>今日は帰らせて<br>もらう</span></div>
+  </div>
+
+  <!-- ④ 아래 두 칸 -->
+  <div class="panel" style="left:462px; top:798px; width:414px; height:330px">
+    <div class="sky"></div><div class="speed"></div>
+    <div class="head" style="left:174px; bottom:96px; width:96px; height:96px"></div>
+    <div class="bal" data-ko="그 말, 잊지 마라" style="left:34px; top:26px; width:138px; height:104px"><span>その言葉、<br>忘れるなよ</span></div>
+  </div>
+  <div class="panel" style="left:24px; top:798px; width:414px; height:330px">
+    <div class="sky"></div><div class="tone"></div>
+    <div class="horizon" style="top:210px"></div>
+    <div class="figure" style="left:170px; width:70px; height:212px"></div>
+    <div class="bal sq" data-ko="……가자" style="right:28px; bottom:28px; width:132px; height:120px"><span>……行こう</span></div>
+  </div>
+</div>
+
+<!-- ===================================================================
+     여기서부터가 확장이 그리는 것. 구조·클래스·스타일 전부 실물과 같다.
+     좌표만 위 가짜 페이지에 맞춰 손으로 넣었다.
+     =================================================================== -->
+<div id="mlr-overlay" class="mlr-show-all">
+  <div id="mlr-status">완료 7486ms · 번역 4819ms</div>
+
+  <div id="mlr-boxes"></div>
+
+  <div id="mlr-panel" class="mlr-pinned">
+    <button data-act="read" data-desc="이 페이지 번역" data-key="Alt+Shift+M">번역</button>
+    <button data-act="select" data-desc="읽을 곳 직접 고르기" data-key="Alt+Shift+D">영역</button>
+    <button data-act="auto" data-desc="넘기면 알아서 번역" class="mlr-on">자동</button>
+    <button data-act="more" class="mlr-more" data-desc="나머지 기능">⋯</button>
+  </div>
+</div>
+
+<script>
+// **박스는 재서 놓는다.** 손으로 좌표를 넣었더니 말풍선에서 밀렸다 — 실제 확장도
+// 검출된 bbox 를 받아 놓는 것이지 사람이 적어 넣지 않는다.
+const boxes = document.getElementById("mlr-boxes");
+for (const el of document.querySelectorAll("[data-ko]")) {
+  const r = el.getBoundingClientRect();
+  const pad = 5;                       // 검출 박스는 글자보다 조금 넓게 잡힌다
+  const div = document.createElement("div");
+  div.className = "mlr-box " + (el.dataset.kind === "sfx" ? "mlr-sfx" : "mlr-translated");
+  Object.assign(div.style, {
+    left: `${r.left - pad}px`, top: `${r.top - pad}px`,
+    width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px`,
+  });
+  div.innerHTML = `<span class="mlr-label">${el.dataset.ko}</span>`;
+  boxes.appendChild(div);
+}
+</script>
+</body>
+</html>
