@@ -49,6 +49,9 @@ class ServerConfig:
     bind_tailscale_only: bool = True
     #: M1 개발용. True면 bind_tailscale_only 보다 우선해 루프백만 연다.
     dev_bind_loopback: bool = True
+    #: 바인딩할 주소를 직접 적는다. 적으면 Tailscale 탐색을 건너뛴다.
+    #: Tailscale 이 아닌 VPN·LAN 을 쓰는 경우용. `0.0.0.0` 은 거부한다.
+    bind_host: str = ""
     port: int = 8788
     #: 공유 시크릿. **파일에 적지 말고 `MTL_AUTH_TOKEN` 으로 준다** — 이 필드는
     #: 환경변수가 없을 때의 폴백이다 (모듈 docstring 참조).

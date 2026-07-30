@@ -187,9 +187,18 @@ local_base_url = "http://100.x.y.z:11434/v1"
 
 ## 서비스 여는 법
 
-바인딩은 루프백 아니면 Tailscale 주소 둘뿐. `0.0.0.0` 폴백 없고, Tailscale 주소를
-못 찾으면 기동 거부 (`__main__.py`). 만화 화면을 통째로 받는 엔드포인트를 설정
-실수로 LAN 에 열지 않기 위함.
+막는 것은 하나뿐 — **모든 인터페이스에 여는 것**(`0.0.0.0`). 만화 화면을 통째로 받는
+엔드포인트가 설정 실수로 LAN 전체에 열리면 안 되기 때문. 주소는 셋 중 하나로 정함
+(`__main__.py`):
+
+| 설정 | 바인딩 |
+|---|---|
+| `dev_bind_loopback = true` (기본) | `127.0.0.1` |
+| `bind_host = "192.168.0.42"` | 적은 주소 그대로 |
+| 둘 다 비우면 | Tailscale 주소를 찾아서. 못 찾으면 기동 거부 |
+
+**Tailscale 은 요구사항이 아님.** 주소를 자동으로 찾아 주니 편해서 기본으로 둔 것.
+다른 VPN(WireGuard, ZeroTier)이나 LAN 주소를 쓰면 `bind_host` 에 적으면 됨.
 
 ### 1. 같은 기계에서만 (기본)
 
@@ -201,13 +210,15 @@ local_base_url = "http://100.x.y.z:11434/v1"
 서비스는 GPU 있는 기계에서만 돌고, 다른 기기는 확장만 깔면 됨. 캡처와 오버레이는
 브라우저가 하고 연산은 전부 원격.
 
-[Tailscale](https://tailscale.com) 로 같은 tailnet 에 넣은 뒤:
+두 기기가 서로 닿아야 함. [Tailscale](https://tailscale.com) 이 제일 쉽고, 같은
+공유기 안이면 LAN 주소로도 됨.
 
 ① 서비스 쪽 `service.local.toml`
 
 ```toml
 [server]
-dev_bind_loopback = false     # Tailscale 주소에만 바인딩
+dev_bind_loopback = false     # 루프백 밖으로
+bind_host = ""                # 비우면 Tailscale 주소를 찾음. LAN 이면 여기 주소를 적음
 auth_disabled = false         # 밖에서 붙으면 인증 켜기
 ```
 

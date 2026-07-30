@@ -57,9 +57,24 @@ def _in_tailscale_net(addr: str) -> bool:
         return False
 
 
+#: 모든 인터페이스에 여는 주소. 어떤 경로로도 허용하지 않는다.
+_WILDCARD = {"0.0.0.0", "::", "*", ""}
+
+
 def resolve_host(server: ServerConfig) -> str:
     if server.dev_bind_loopback:
         return "127.0.0.1"
+    # **Tailscale 은 이 서비스의 요구사항이 아니다.** 자동 탐색이 편해서 기본으로
+    # 둔 것뿐이고, 주소를 직접 적으면 그것을 쓴다 (다른 VPN, LAN 주소 등).
+    # 막는 것은 하나뿐이다 — 와일드카드로 모든 인터페이스에 여는 것.
+    if server.bind_host:
+        host = server.bind_host.strip()
+        if host in _WILDCARD:
+            raise SystemExit(
+                f"bind_host = {host!r} 는 모든 인터페이스에 연다. 주소를 하나 골라 적을 것.\n"
+                "  이 기계 안에서만 쓸 것이면 dev_bind_loopback = true"
+            )
+        return host
     if server.bind_tailscale_only:
         ip = find_tailscale_ip()
         if ip is None:
