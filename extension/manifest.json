@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Manga Live Reader (스파이크)",
-  "version": "0.0.1",
-  "description": "뷰어 페이지를 캡처해 mtl-service 로 보내고 결과를 겹쳐 보인다. 경로 검증용.",
+  "name": "Manga Live Reader",
+  "version": "0.1.0",
+  "description": "만화 뷰어 화면을 캡처해 자기 mtl-service 로 보내고 번역을 그 위에 겹쳐 보인다.",
 
   "permissions": ["activeTab", "scripting", "storage"],
 

@@ -1,7 +1,10 @@
-# 브라우저 확장 (스파이크)
+# 브라우저 확장
+
+**세 질문은 다 통과했고 이 경로가 본선이 됐다** — OS 캡처 경로는 만들지 않았다.
+아래 두 절은 그때의 판단 기록이고, 지금 동작하는 것은 「쓰는 법」 부터다.
 
 `DESIGN.md` 는 이 경로를 부록 A 에서 **미검증** 상태로 기각했다. 기각 근거가 둘 다
-약해서 다시 본다:
+약해서 다시 봤다:
 
 1. "Vivaldi 내장 캡처가 모든 페이지에서 실패" — 그건 Vivaldi 의 스크린샷 기능이지
    확장의 `chrome.tabs.captureVisibleTab` 이 아니다. 다른 API 다
@@ -314,6 +317,25 @@ Zira·David/en-US 뿐). 음성은 원문(일본어)을 읽으므로 그대로면
 옵션 화면에 **음성 서버 주소**를 넣으면 브라우저 내장 음성 대신 그쪽을 쓴다.
 「목록 불러오기」로 목소리를 받아 고른다. 비우면 내장 음성을 쓴다.
 
+### 서버는 이 저장소에 없다
+
+**음성 서버와 음색 모델은 배포물이 아니다.** 캐릭터 목소리로 학습한 것이라
+재배포할 수 없다. 기본값이 빈 문자열인 것이 그 이유다 — 그대로 쓰면 브라우저 내장
+음성으로 돈다.
+
+자기 것을 띄우려면 두 엔드포인트만 맞추면 된다. 무엇으로 만들든 상관없다:
+
+```
+GET  /voices  → {"voices": ["a", "b"], "default": "a",
+                 "info": {"a": {"description": "화면에 보일 설명"}}}
+
+POST /tts     ← {"text": "…", "language": "Japanese" | "Korean", "voice": "a"}
+              → 오디오 바이트 (Web Audio 로 디코드할 수 있으면 된다. wav 로 재봤다)
+```
+
+`voice` 는 옵션 화면에서 「(서버 기본값)」을 고르면 빠진다. `info` 와 `default` 는
+없어도 되고, 그때는 이름만 목록에 뜬다.
+
 **서버가 없거나 실패하면 조용히 내장 음성으로 떨어진다** — 소리가 아예 안 나는 것이
 제일 나쁘다.
 
@@ -347,8 +369,8 @@ Blob URL 은 만든 워커의 수명에 묶이는데 MV3 서비스 워커는 30�
 ## 만화 사이트에서 자동으로 켜기
 
 옵션 화면의 **「자동으로 켜질 사이트」** 에 적은 호스트에서는 「자동」이 알아서 켜진다.
-기본으로 comic-walker · yanmaga · shonenjumpplus · sunday-webry · comic-fuz ·
-comic-growl · ichijin-plus 가 들어 있다. 한 줄에 하나씩 고치면 된다.
+한 줄에 하나. **기본은 비어 있다** — 사이트 이름을 배포물에 박아 두지 않는다. 비어
+있으면 자동은 버튼으로 켠 탭에서만 돈다.
 
 뒤에서부터 맞춘다 — `yanmaga.jp` 는 `www.yanmaga.jp` 에도 걸리고,
 `yanmaga.jp.evil.com` 같은 위장에는 안 걸린다.
@@ -602,7 +624,7 @@ CSS 변수(`--mlr-label-size`) 하나로 둔다. 전체 펼침(`Alt+Shift+L`)은
    일부만 겹치는 것은 안 친다 (`read` 가 `readme` 에 걸리면 곤란하다).
    `episode-123`·`viewer.html` 처럼 뒤에 구분자가 붙은 것은 같은 것으로 본다.
    보는 사이트가 다른 낱말을 쓰면 옵션 화면에서 더한다. **비우면 이 규칙을 안 쓴다.**
-   기본 목록으로 실측 확인한 것: yanmaga `/viewer/comics/…`, comic-walker
+   실측해 둔 뷰어 주소 꼴(참고용): yanmaga `/viewer/comics/…`, comic-walker
    `/detail/…/episodes/…`, shonenjumpplus·sunday-webry `/episode/…`,
    comic-fuz `/manga/viewer/…`, ichijin-plus `/episodes/…`.
 3. **화면을 채우고 있다** — 그림이 화면 높이의 60%, 넓이의 25% 이상.

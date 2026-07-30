@@ -39,17 +39,13 @@ const DEFAULTS = {
   //:
   //: 비우면 이 규칙을 안 쓴다 (호스트만 보던 예전 동작).
   autoPaths: "viewer, episode, episodes, chapter, chapters, story, read, book, volume",
-  //: 이 호스트들에서는 「자동」이 알아서 켜진다. 한 줄에 하나.
+  //: 여기 적은 호스트에서는 「자동」이 알아서 켜진다. 한 줄에 하나.
   //: 뒤에서부터 맞춘다 — `yanmaga.jp` 는 `www.yanmaga.jp` 에도 걸린다.
-  autoSites: [
-    "comic-walker.com",
-    "yanmaga.jp",
-    "shonenjumpplus.com",
-    "sunday-webry.com",
-    "comic-fuz.com",
-    "comic-growl.com",
-    "ichijin-plus.com",
-  ].join("\n"),
+  //:
+  //: **기본은 비어 있다.** 사이트 이름을 배포물에 박아 두면 "이 사이트들에서 쓰라"
+  //: 는 안내가 된다. 자기가 보는 곳을 옵션 화면에서 적는다. 비어 있으면 자동은
+  //: 사용자가 버튼으로 켠 탭에서만 돈다.
+  autoSites: "",
 };
 
 // ---------------------------------------------------------------------------
