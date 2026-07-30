@@ -1,8 +1,13 @@
 [project]
 name = "manga-live-reader"
 version = "0.1.0"
-description = "만화 뷰어 화면을 캡처해 OCR + 번역 결과를 오버레이로 표시하는 개인용 읽기 도구"
+description = "만화 뷰어 화면을 캡처해 OCR + 번역 결과를 오버레이로 표시하는 읽기 도구"
 requires-python = ">=3.11,<3.12"
+# **선택이 아니다.** src/mtl_service/ctd 가 comic-text-detector(GPL-3.0)와
+# YOLOv5 v6.x(GPL-3.0) 추론 코드의 벤더링본이고 서비스가 그것을 직접 import 한다.
+# src/mtl_service/ctd/NOTICE.md 참조.
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 
 dependencies = [
     # --- 서비스 ---
@@ -25,6 +30,12 @@ dependencies = [
     "anthropic>=0.120.0",
     "google-genai>=2.14.0",
 ]
+
+# `[project]` 의 테이블은 배열 뒤에 온다 — 위에 두면 `dependencies` 가 이 테이블
+# 안으로 들어간다 (실제로 한 번 그렇게 됐다).
+[project.urls]
+Homepage = "https://github.com/vanillapapaya/MangaLiveReader"
+Issues = "https://github.com/vanillapapaya/MangaLiveReader/issues"
 
 [project.optional-dependencies]
 client = [
