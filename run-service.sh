@@ -33,7 +33,11 @@ cd "$(dirname "$0")"
 # ---------------------------------------------------------------------------
 # 설정을 보고 어느 파이썬으로 띄울지 정한다
 # ---------------------------------------------------------------------------
-loopback=$(grep -E '^\s*dev_bind_loopback\s*=' service.toml | tail -1 | grep -c 'true' || true)
+# service.local.toml 이 service.toml 을 덮는다 (config.py 와 같은 규칙). 파일 순서가
+# 곧 우선순위다 — 뒤에 오는 것을 `tail -1` 이 집는다. 여기서 놓치면 설정은 Tailscale
+# 바인딩인데 WSL 파이썬으로 띄워 기동이 거부된다.
+loopback=$(grep -hE '^\s*dev_bind_loopback\s*=' service.toml service.local.toml 2>/dev/null \
+  | tail -1 | grep -c 'true' || true)
 
 if [[ "$loopback" == "1" ]]; then
   MODE="wsl"

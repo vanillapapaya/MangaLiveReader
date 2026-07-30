@@ -79,8 +79,27 @@ def main() -> int:
     cfg = load()
     host = resolve_host(cfg.server)
 
+    # 인증을 끈 상태는 **바인딩에 따라 위험이 다르다.** 여기서 기동을 거부하지는
+    # 않는다 — `resolve_host` 가 루프백 아니면 Tailscale 주소만 내주므로 둘 다
+    # 공개 노출이 아니다. 다만 앞단에 프록시(Tailscale Funnel, cloudflared 등)를
+    # 두면 이 프로세스는 그것을 알 방법이 없다. 그때는 반드시 켜야 한다.
     if cfg.server.auth_disabled:
-        print("! 인증이 꺼져 있다 (service.toml [server].auth_disabled)", file=sys.stderr)
+        if host == "127.0.0.1":
+            print("! 인증이 꺼져 있다. 루프백이라 이 기계 안에서만 붙는다.", file=sys.stderr)
+        else:
+            print(
+                f"! 인증이 꺼져 있다. 같은 tailnet 의 기기는 전부 {host} 에 붙는다.\n"
+                "  앞단에 프록시를 두어 밖으로 열 것이면 MTL_AUTH_TOKEN 을 정하고\n"
+                "  auth_disabled = false 로 바꿀 것 — /read 는 API 크레딧을 태운다.",
+                file=sys.stderr,
+            )
+    elif not cfg.server.auth_token:
+        # 이 조합은 요청마다 500 이 된다 (`app.require_token`). 기동에서 잡는다.
+        raise SystemExit(
+            "인증이 켜져 있는데 토큰이 없다.\n"
+            "  · MTL_AUTH_TOKEN=<시크릿> 을 키 파일이나 환경변수로 줄 것\n"
+            "    (키 파일 경로는 src/mtl_service/env.py 참조)"
+        )
 
     print(f"mtl-service → http://{host}:{cfg.server.port}")
     uvicorn.run(

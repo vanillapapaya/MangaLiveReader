@@ -3,19 +3,38 @@
 상대 경로는 전부 **프로젝트 루트 기준**으로 해석해 절대 경로로 만든다. 서비스는
 작업 스케줄러가 임의의 작업 디렉터리에서 띄우므로(§9.2) 상대 경로를 그대로
 들고 다니면 모델 가중치를 못 찾는다.
+
+## 파일이 둘이다
+
+`service.toml` 은 **커밋되는 파일**이다. 공개 저장소가 되면서 여기에 각자의 값을
+적는 방식이 두 가지로 곤란해졌다:
+
+- 시크릿이 추적되는 파일에 앉는다 (`auth_token`). 실수로 커밋된다
+- 내 기계에 맞춘 값(`dev_bind_loopback`, 모델 선택)이 `git pull` 마다 충돌한다
+
+그래서 `service.local.toml` 을 덮어쓰기 층으로 둔다 — gitignore 되어 있고, 적은
+절(節)의 적은 키만 이긴다. 커밋되는 쪽은 **주석이 붙은 기본값 문서**로 남는다.
+
+시크릿은 이 층에도 넣지 않는다. `auth_token` 은 `MTL_AUTH_TOKEN` 환경변수(또는
+`env.py` 가 읽는 키 파일)가 이긴다 — 키를 파일 하나에서만 관리하게 된다.
 """
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .env import load_local_env
+
 #: src/mtl_service/config.py → 프로젝트 루트
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_CONFIG_PATH = ROOT / "service.toml"
+#: 커밋되지 않는 덮어쓰기 층. 기본 경로로 읽을 때만 적용한다.
+LOCAL_CONFIG_PATH = ROOT / "service.local.toml"
 
 
 def _resolve(value: str) -> Path:
@@ -31,6 +50,8 @@ class ServerConfig:
     #: M1 개발용. True면 bind_tailscale_only 보다 우선해 루프백만 연다.
     dev_bind_loopback: bool = True
     port: int = 8788
+    #: 공유 시크릿. **파일에 적지 말고 `MTL_AUTH_TOKEN` 으로 준다** — 이 필드는
+    #: 환경변수가 없을 때의 폴백이다 (모듈 docstring 참조).
     auth_token: str = ""
     auth_disabled: bool = False
 
@@ -128,17 +149,39 @@ def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     return dict(raw.get(name) or {})
 
 
+def _read(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def _overlay(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """절 단위로 합친다. **한 절을 통째로 갈아치우지 않는다** — `[detect]` 에 키
+    하나만 적었다고 나머지 열 개가 기본값으로 돌아가면 진단할 수 없는 일이 된다.
+    """
+    merged = {k: dict(v) if isinstance(v, dict) else v for k, v in base.items()}
+    for name, section in over.items():
+        if isinstance(section, dict) and isinstance(merged.get(name), dict):
+            merged[name].update(section)
+        else:
+            merged[name] = section
+    return merged
+
+
 def load(path: str | Path | None = None) -> Config:
     """설정 파일을 읽는다. 파일이 없으면 전부 기본값.
 
     알 수 없는 키는 조용히 무시하지 않고 예외를 낸다. 오타 난 설정이 기본값으로
     조용히 동작하면 "왜 안 먹지"로 시간을 버린다.
+
+    기본 경로로 읽을 때는 `service.local.toml` 이 위에 덮인다. 경로를 명시하면
+    (테스트·도구) 덮지 않는다 — 남의 기계 설정이 결과에 새어 들어오면 안 된다.
     """
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
-    raw: dict[str, Any] = {}
-    if cfg_path.exists():
-        with cfg_path.open("rb") as f:
-            raw = tomllib.load(f)
+    raw = _read(cfg_path)
+    if path is None:
+        raw = _overlay(raw, _read(LOCAL_CONFIG_PATH))
 
     def build(cls: type, name: str, **overrides: Any) -> Any:
         data = _section(raw, name)
@@ -155,8 +198,15 @@ def load(path: str | Path | None = None) -> Config:
 
     jsonl = metrics_raw.get("jsonl_path", "logs/metrics.jsonl")
 
+    # 키 파일을 먼저 읽어 `MTL_AUTH_TOKEN` 을 환경에 올린다. 이미 설정된
+    # 환경변수는 덮지 않는다 (env.py 규약).
+    load_local_env()
+    server = build(ServerConfig, "server")
+    if token := os.environ.get("MTL_AUTH_TOKEN", "").strip():
+        server.auth_token = token
+
     return Config(
-        server=build(ServerConfig, "server"),
+        server=server,
         models=build(
             ModelsConfig,
             "models",

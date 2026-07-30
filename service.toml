@@ -1,20 +1,29 @@
 # mtl-service 설정. DESIGN.md §12 참조.
+#
+# **이 파일은 커밋된다.** 자기 기계에 맞춘 값은 `service.local.toml` 에 적는다 —
+# 적은 절의 적은 키만 이기고, gitignore 되어 있다 (`config.py` 모듈 docstring).
+# 시크릿은 그 파일에도 넣지 않는다. `MTL_AUTH_TOKEN` 환경변수를 쓴다.
 
 [server]
 # true면 기동 시 Tailscale 인터페이스 IP를 찾아 거기에만 바인딩한다.
 # 못 찾으면 기동을 거부한다 (0.0.0.0 폴백 금지).
 bind_tailscale_only = true
-# **맥북 모드.** Tailscale 주소(<서비스 머신의 tailscale 주소>)에만 바인딩한다.
+# **기본은 루프백이다** — 서비스와 브라우저가 같은 기계에 있는 경우.
 #
-# 이 값이 false 면 **서비스를 윈도우에서 띄워야 한다** — WSL 은 NAT 뒤(172.30.x)라
-# 윈도우의 Tailscale 인터페이스가 안 보이고, 기동을 거부한다. `run-service.cmd` 를 쓸 것.
-#
-# WSL 에서 띄우려면(`run-service.sh`) 이 값을 true 로 되돌린다. 그러면 맥북에서는
-# 못 붙고 윈도우 브라우저만 된다 (WSL2 의 localhost 전달).
-dev_bind_loopback = false
+# 다른 기기(맥북·아이패드)에서 쓰려면 `service.local.toml` 에 false 로 적는다.
+# 그러면 Tailscale 주소에만 바인딩하고, **서비스를 윈도우에서 띄워야 한다** —
+# WSL 은 NAT 뒤(172.30.x)라 윈도우의 Tailscale 인터페이스가 안 보이고 기동을
+# 거부한다. `run-service.cmd` 를 쓸 것.
+dev_bind_loopback = true
 port = 8788
-auth_token = "CHANGEME-공유-시크릿"
-# M1 개발 편의. M2 이후 false.
+# 공유 시크릿은 **여기 적지 않는다.** `MTL_AUTH_TOKEN` 으로 준다 (env.py 가 읽는
+# 키 파일에 한 줄 넣어도 된다). 파일에 적으면 커밋 사고가 난다.
+#
+# 기본 조합(루프백 + 인증 없음)은 이 기계 안에서만 붙으므로 안전하다. 바인딩은
+# 루프백 아니면 Tailscale 주소뿐이고 `0.0.0.0` 폴백이 없다 (`__main__.py`).
+#
+# **앞단에 프록시(Tailscale Funnel, cloudflared 등)를 두어 밖으로 열 때는 반드시
+# false 로 바꾼다.** 서비스는 프록시가 붙었는지 알 방법이 없다.
 auth_disabled = true
 
 [models]
@@ -88,8 +97,11 @@ min_gap_ratio = 0.015
 # 품질·비용 비교는 `DEVLOG.md` 에 있다 (Sonnet 5 가 200쪽 $1.64, Gemini $2.44 —
 # 단가는 Gemini 가 절반인데 사고 토큰이 3.3배라 실제로는 더 비싸다). 유료로 계속
 # 쓸 때는 claude-sonnet-5 로 되돌릴 것.
-model_fast = "gemini-3.6-flash"
-model_quality = "gemini-3.6-flash"
+#
+# 기본값은 실측이 더 좋았던 쪽(claude-sonnet-5)이다. Gemini 로 시험하려면
+# `service.local.toml` 에 적는다 — 이 파일을 고치면 커밋에 섞인다.
+model_fast = "claude-sonnet-5"
+model_quality = "claude-sonnet-5"
 # Anthropic 모델의 effort. low/medium 이 지연 차이가 거의 없었고(둘 다 8-9초)
 # medium 에서 오히려 품질이 흔들린 적이 있어 low 로 둔다.
 effort = "low"
