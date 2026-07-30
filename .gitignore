@@ -1,7 +1,23 @@
-# 비밀값. 절대 커밋 금지 (src/mtl_service/env.py 참조)
-.env.local
+# ---------------------------------------------------------------------------
+# 비밀값. **절대 커밋 금지** (src/mtl_service/env.py 참조)
+#
+# 무시만으로는 부족하다 — `git add -f` 한 번이면 뚫린다. `.githooks/pre-commit` 이
+# 스테이지된 내용에서 키 모양을 찾아 커밋 자체를 막는다. 켜는 법:
+#     git config core.hooksPath .githooks
+# ---------------------------------------------------------------------------
 .env
+.env.*
 env
+*.env
+**/env
+secrets*
+*.key
+*.pem
+credentials*
+
+# 이 기계에 맞춘 설정. service.toml 위에 덮인다 (src/mtl_service/config.py 참조)
+service.local.toml
+*.local.toml
 
 # 산출물
 .venv/
@@ -16,6 +32,11 @@ debug/
 
 # 에이전트 세션 부산물
 .claude/
+
+# 나에게 쓰는 글. 공개하지 않는다 — 검토 메모와 개발일지.
+# (디스크에는 그대로 있고, 무시만 한다)
+REVIEW.md
+DEVLOG.md
 
 # ---------------------------------------------------------------------------
 # 만화 캡처 — **저작물이다. 커밋하지 않는다.**
@@ -32,3 +53,7 @@ test/ab/
 *.png
 *.jpg
 *.jpeg
+
+# **확장 아이콘은 예외다.** 위 `*.png` 에 걸려 커밋되지 않고 있었다 — manifest 가
+# 참조하는 파일이 없으면 크롬이 확장 로드를 거부한다. 클론해 봐야 드러나는 종류다.
+!extension/icons/*.png

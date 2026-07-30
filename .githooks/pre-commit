@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# 키가 커밋에 섞이는 것을 **막는다**. .gitignore 는 `git add -f` 한 번이면 뚫린다.
+#
+# 켜는 법 (클론한 사람도 한 번은 해야 한다 — git 은 훅을 자동으로 켜 주지 않는다):
+#     git config core.hooksPath .githooks
+#
+# 오탐이 나면 그 커밋만:
+#     git commit --no-verify
+set -uo pipefail
+
+fail=0
+red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# 1. 파일 이름으로 거른다. 내용이 무엇이든 이 이름들은 들어가면 안 된다.
+# ---------------------------------------------------------------------------
+while IFS= read -r f; do
+  case "$(basename "$f")" in
+    env|.env|.env.*|*.key|*.pem|service.local.toml|REVIEW.md|DEVLOG.md)
+      red "커밋 거부: $f — 커밋하면 안 되는 파일이다"
+      fail=1
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+# ---------------------------------------------------------------------------
+# 2. 내용에서 키 모양을 찾는다.
+#
+# **줄 내용을 출력하지 않는다.** 그 줄에 키가 들어 있고, 훅 출력은 터미널과
+# 로그에 남는다. 파일과 줄 번호만 알려 준다 (env.py 가 같은 이유로 그렇게 한다).
+# ---------------------------------------------------------------------------
+patterns=(
+  'sk-ant-[A-Za-z0-9_-]{20,}'      # Anthropic
+  'AIza[0-9A-Za-z_-]{30,}'         # Google
+  'sk-[A-Za-z0-9]{40,}'            # OpenAI 형태
+  'gh[pousr]_[A-Za-z0-9]{30,}'     # GitHub 토큰
+  'MTL_AUTH_TOKEN[[:space:]]*=[[:space:]]*[^[:space:]"'"'"']{8,}'
+  'auth_token[[:space:]]*=[[:space:]]*"[^"]{8,}"'
+)
+
+for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+  [[ -f "$f" ]] || continue
+  # 이진 파일 건너뛰기
+  git diff --cached --numstat -- "$f" | grep -q '^-' && continue
+  for p in "${patterns[@]}"; do
+    if hits=$(git show ":$f" 2>/dev/null | grep -nEc "$p") && [[ "$hits" -gt 0 ]]; then
+      lines=$(git show ":$f" | grep -nE "$p" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
+      red "커밋 거부: $f:$lines — 키로 보이는 값이 있다 (내용은 찍지 않는다)"
+      fail=1
+    fi
+  done
+done
+
+if [[ "$fail" -ne 0 ]]; then
+  red ""
+  red "키는 ~/.config/mangalivereader/env 에 둔다. 이 저장소에는 넣지 않는다."
+  red "오탐이면: git commit --no-verify"
+  exit 1
+fi
+exit 0
