@@ -1946,6 +1946,66 @@ const LABEL_EDGE_PAD = 8;
 // 박스가 아니라 **라벨**을 끈다 — 박스를 끄는 것은 「크기 조정」이 이미 쓴다.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 라벨 ↔ 박스 연결선
+//
+// 라벨을 멀리 옮기면 **어느 말풍선의 번역인지 알 수 없다.** 끄는 동안, 그리고
+// 옮겨 둔 라벨에 마우스를 올렸을 때 선으로 잇는다.
+//
+// SVG 하나를 오버레이에 두고 선 하나만 옮겨 쓴다. 라벨마다 만들면 박스가 20개인
+// 페이지에서 DOM 이 그만큼 는다.
+// ---------------------------------------------------------------------------
+
+function leaderLine() {
+  const root = overlay();
+  let svg = root.querySelector("#mlr-leader");
+  if (!svg) {
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = "mlr-leader";
+    svg.innerHTML = '<line x1="0" y1="0" x2="0" y2="0" /><circle cx="0" cy="0" r="3" />';
+    root.appendChild(svg);
+  }
+  return svg;
+}
+
+/** 라벨과 그 박스를 잇는다. 라벨에서 가장 가까운 박스 변의 한 점을 잡는다 —
+ *  박스 중심으로 그으면 선이 말풍선 글자를 가로지른다. */
+function showLeader(label) {
+  const box = label.closest(".mlr-box");
+  if (!box) return;
+  const b = box.getBoundingClientRect();
+  const l = label.getBoundingClientRect();
+  if (!l.width || !b.width) return;
+
+  const lx = l.left + l.width / 2;
+  const ly = l.top + l.height / 2;
+  // 박스 안쪽으로 물리는 점 (라벨 쪽 변에서 잡는다)
+  const bx = Math.max(b.left + 4, Math.min(lx, b.right - 4));
+  const by = Math.max(b.top + 4, Math.min(ly, b.bottom - 4));
+
+  const svg = leaderLine();
+  const line = svg.querySelector("line");
+  const dot = svg.querySelector("circle");
+  line.setAttribute("x1", bx); line.setAttribute("y1", by);
+  line.setAttribute("x2", lx); line.setAttribute("y2", ly);
+  dot.setAttribute("cx", bx); dot.setAttribute("cy", by);
+  svg.classList.add("mlr-on");
+}
+
+function hideLeader() {
+  document.getElementById(OVERLAY_ID)?.querySelector("#mlr-leader")?.classList.remove("mlr-on");
+}
+
+// 옮겨 둔 라벨에 마우스를 올리면 어디 것인지 보여 준다. 안 옮긴 라벨은 박스에
+// 붙어 있으니 선이 필요 없다.
+document.addEventListener("pointerover", (e) => {
+  const label = e.target?.closest?.(".mlr-label");
+  if (label?.dataset.pinned) showLeader(label);
+}, true);
+document.addEventListener("pointerout", (e) => {
+  if (e.target?.closest?.(".mlr-label") && !dragLabel) hideLeader();
+}, true);
+
 let dragLabel = null;
 
 //: 이만큼은 움직여야 "옮겼다" 로 본다. 그냥 누른 것까지 고정하면, 라벨을 클릭할
@@ -1978,6 +2038,7 @@ document.addEventListener(
     if (!dragLabel.moved && Math.hypot(mx, my) < DRAG_THRESHOLD_PX) return;
     dragLabel.moved = true;
     applyShift(dragLabel.el, Math.round(dragLabel.dx + mx), Math.round(dragLabel.dy + my));
+    showLeader(dragLabel.el);
   },
   true
 );
@@ -1990,6 +2051,7 @@ document.addEventListener(
     e.stopPropagation();
     const { el, moved } = dragLabel;
     el.classList.remove("mlr-label-dragging");
+    hideLeader();
     if (moved) {
       // 옮긴 자리를 기억하고 **자동 배치에서 빼 둔다.** 안 빼면 다음 번역이 도착할
       // 때 원래 자리로 되돌아간다.
@@ -2011,6 +2073,7 @@ document.addEventListener(
     if (!label) return;
     e.preventDefault();
     e.stopPropagation();
+    hideLeader();
     delete label.dataset.pinned;
     delete label.dataset.dy;
     label.dataset.dx = "0";
@@ -2136,11 +2199,23 @@ function doLayoutLabels() {
   const placed = [];
   const items = labels
     .map((l) => {
+      // **손으로 옮긴 것은 건드리지 않는다.** `fitLabel` 은 `dataset.dx` 를 다시
+      // 쓰고 `applyShift(l, dx, 0)` 로 세로 이동을 지운다 — 옮겨 둔 자리가 그대로
+      // 사라진다. 저장해 둔 값을 그대로 다시 걸어 주고 배치 계산에서 뺀다.
+      //
+      // 이게 빠져 있어서 "옮긴 라벨이 원문 보기 하면 제자리로 돌아간다" 가 났다.
+      // 아래 루프에 `pinned` 를 보는 분기는 있었는데 여기서 넣어 주지 않아
+      // 언제나 undefined 였다 — 죽은 코드였다.
+      const pinned = Boolean(l.dataset.pinned);
+      if (pinned) {
+        applyShift(l, Number(l.dataset.dx || 0), Number(l.dataset.dy || 0));
+        return { l, r: l.getBoundingClientRect(), pinned };
+      }
       // **겹침을 풀기 전에 화면 안으로 들어오게 한다.** 순서가 바뀌면 방향이
       // 바뀌면서 사각형이 달라져 겹침 계산이 어긋난다.
       const box = l.closest(".mlr-box");
       if (box) fitLabel(box, l, panelRect);
-      return { l, r: l.getBoundingClientRect() };
+      return { l, r: l.getBoundingClientRect(), pinned };
     })
     .sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left);
 
