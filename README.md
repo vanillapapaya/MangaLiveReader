@@ -291,7 +291,7 @@ Tailscale 바인딩을 쓴다면 `tailscaled` 가 먼저 올라와야 하니, �
 
 **서버도 음색 모델도 이 저장소에 없다.** 서버는 따로 있다:
 
-> **[gpt-sovits-tts-server](https://github.com/vanillapapaya/gpt-sovits-tts-server)**
+> **[gpt-sovits-server](https://github.com/vanillapapaya/gpt-sovits-server)**
 > — GPT-SoVITS 에 얇은 HTTP 껍데기를 씌워 목소리를 이름으로 고르게 한다. 아래 계약을
 > 그대로 구현한 것이라 받아서 띄우면 바로 붙는다.
 

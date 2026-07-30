@@ -188,7 +188,7 @@ API 로 나가고 그림은 나가지 않는다.
 법」](README.md#서비스-여는-법) 에 있다.
 
 **목소리를 예쁘게 바꾸고 싶다** — 기본은 브라우저 음성이라 기계음이다. 학습된
-목소리를 쓰려면 [gpt-sovits-tts-server](https://github.com/vanillapapaya/gpt-sovits-tts-server)
+목소리를 쓰려면 [gpt-sovits-server](https://github.com/vanillapapaya/gpt-sovits-server)
 를 따로 띄운다. 그래픽카드가 하나 더 있는 편이 좋다.
 
 **끄고 싶다** — 검은 창을 닫으면 서비스가 꺼진다. 확장은 `chrome://extensions` 에서

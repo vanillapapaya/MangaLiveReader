@@ -17,7 +17,7 @@
   다시 넘겨 봐도 돈이 들지 않습니다.
 - **음성 읽기** — 원문을 읽기 순서대로 소리내어 읽습니다. 기본은 브라우저 내장
   음성이고, 학습된 목소리를 쓰려면
-  [gpt-sovits-tts-server](https://github.com/vanillapapaya/gpt-sovits-tts-server)
+  [gpt-sovits-server](https://github.com/vanillapapaya/gpt-sovits-server)
   를 따로 띄웁니다.
 - **다른 기기에서 쓰기** — 서비스는 GPU 있는 PC 한 대에서만 돌리고, 맥북이나 다른
   PC 는 확장만 깔면 됩니다 (Tailscale).
