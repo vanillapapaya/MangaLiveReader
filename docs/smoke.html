@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  콘텐츠 스크립트 연기 시험.
+
+  확장은 `manifest.json` 의 `js` 배열 순서대로 **같은 전역에서** 실행된다. 파일을
+  나눈 뒤로는 앞 파일이 뒤 파일의 것을 로드 시점에 쓰면 ReferenceError 로 죽고,
+  그러면 그 파일의 나머지도 실행되지 않아 다음 파일까지 연쇄로 깨진다. 브라우저에
+  올려 보기 전에는 안 보인다.
+
+  여기서 잡는 것:
+    1. 순서대로 실어도 로드 중 오류가 없는가
+    2. 파일을 넘나드는 호출이 실제로 되는가 (아래 exercise)
+
+  돌리는 법 — 크롬 헤드리스로 DOM 을 찍어 결과 줄만 본다:
+
+    chrome --headless --dump-dom --allow-file-access-from-files docs/smoke.html
+-->
+<meta charset="utf-8">
+<title>mlr smoke</title>
+<div id="out">(안 돌았다)</div>
+
+<script>
+  // 콘텐츠 스크립트가 기대하는 최소한의 chrome API. 없으면 로드 즉시 죽는다.
+  const noop = () => {};
+  window.chrome = {
+    runtime: {
+      id: "smoke",
+      lastError: null,
+      getURL: (p) => p,
+      sendMessage: () => Promise.resolve(null),
+      onMessage: { addListener: noop },
+      connect: () => ({ onDisconnect: { addListener: noop }, postMessage: noop }),
+    },
+    storage: {
+      sync: { get: () => Promise.resolve({}), set: () => Promise.resolve() },
+      local: { get: () => Promise.resolve({}), set: () => Promise.resolve() },
+      onChanged: { addListener: noop },
+    },
+  };
+  const errs = [];
+  window.addEventListener("error", (e) =>
+    errs.push(`${e.message} @ ${e.filename?.split("/").pop()}:${e.lineno}`)
+  );
+  window.addEventListener("unhandledrejection", (e) => errs.push("promise: " + e.reason));
+  window.__errs = errs;
+</script>
+
+<script src="../extension/content.js"></script>
+<script src="../extension/select.js"></script>
+<script src="../extension/panel.js"></script>
+<script src="../extension/speak.js"></script>
+<script src="../extension/boxes.js"></script>
+<script src="../extension/auto.js"></script>
+
+<script>
+  // 파일 경계를 넘는 호출만 고른다. 화면을 만들고, 상태를 찍고, 라벨을 배치하고,
+  // 연결선을 그리는 길이 각각 다른 파일에 있다.
+  function exercise() {
+    const root = overlay();                        // panel.js
+    status("연기 시험");                            // panel.js
+    isOurs(root);                                  // auto.js → panel.js 의 MENU_ID
+    escapeHtml("<b>&</b>");                        // content.js
+
+    const box = document.createElement("div");
+    box.className = "mlr-box mlr-translated";
+    box.id = "mlr-box-smoke1";
+    Object.assign(box.style, { left: "40px", top: "40px", width: "120px", height: "80px" });
+    box.innerHTML = '<span class="mlr-label">라벨</span>';
+    root.querySelector("#mlr-boxes").appendChild(box);
+
+    const label = box.querySelector(".mlr-label");
+    showLeader(label);                             // boxes.js
+    hideLeader();                                  // boxes.js
+    applyShift(label, 3, 4);                       // boxes.js
+    layoutLabels();                                // boxes.js
+    hasSpeech(box);                                // speak.js
+  }
+
+  setTimeout(() => {
+    try {
+      exercise();
+    } catch (e) {
+      window.__errs.push("exercise: " + (e?.message || e));
+    }
+    setTimeout(() => {
+      document.getElementById("out").textContent = window.__errs.length
+        ? "ERRORS: " + window.__errs.join(" | ")
+        : "SMOKE OK (로드·호출 모두 통과)";
+    }, 200);
+  }, 300);
+</script>

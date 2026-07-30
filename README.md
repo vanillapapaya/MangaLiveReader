@@ -386,6 +386,10 @@ GPU·네트워크 없이 도는 것만 있음. 파이프라인 전체 검증은 
 `scripts/` 의 도구: `ab_translate.py`(모델 A/B), `check_merge.py`·`check_order.py`
 (픽스처 회귀), `send_page.py`, `crop_viewer.py`.
 
+확장은 파이썬 테스트가 못 본다. `docs/smoke.html` 이 콘텐츠 스크립트를 manifest
+순서대로 실어 보고 파일을 넘나드는 호출을 태운다 — 로드 순서가 틀리면 여기서 잡힌다
+(`docs/shoot.sh` 가 같이 돌린다).
+
 만화 캡처는 저작물이라 저장소에 넣지 않음. 정답 표는 좌표만 담은
 `test/fixtures/*.json`.
 

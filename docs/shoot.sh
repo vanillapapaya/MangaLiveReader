@@ -44,4 +44,10 @@ JS
 shoot 'docs\.shot-options.html' 860,1500 options.png
 rm -f docs/.shot-options.html
 
+# 콘텐츠 스크립트 연기 시험. 파일을 나눈 뒤로는 로드 순서 하나로 통째로 깨진다.
+echo -n "연기 시험: "
+"$CHROME" --headless --disable-gpu --virtual-time-budget=4000 --dump-dom \
+  --allow-file-access-from-files "file:///$WIN\\docs\\smoke.html" 2>/dev/null |
+  grep -oE 'id="out">[^<]*' | sed 's/id="out">//' | head -1
+
 ls -l docs/demo.png docs/options.png
