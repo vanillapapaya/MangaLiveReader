@@ -2,7 +2,7 @@
 # README 용 그림 두 장을 찍는다. **윈도우 크롬을 헤드리스로 쓴다** — WSL 에는
 # 화면도 크롬도 없다. 경로는 크롬에 넘길 것이라 윈도우 형식이어야 한다.
 #
-#   demo.png     합성 만화 페이지 + 진짜 오버레이 (docs/demo.html)
+#   demo.png     직접 그린 만화 페이지 + **진짜 파이프라인 결과** (docs/demo.html)
 #   options.png  진짜 옵션 화면. 값은 찍을 때만 채운다 — 확장 밖에서 열면
 #                chrome.storage 가 없어 칸이 전부 비기 때문이다
 set -euo pipefail
@@ -16,6 +16,11 @@ shoot() {  # shoot <파일> <가로,세로> <결과>
     grep -viE "^\[|DevTools|Fontconfig" || true
 }
 
+# ① 오버레이 없는 원본을 먼저 찍는다. 파이프라인에 넣을 입력이다.
+shoot 'docs\demo.html?bare' 1280,1200 _page.png
+# ② 검출·OCR·번역을 실제로 돌린다 (GPU·API 키 필요). 결과가 demo-result.js 로 나온다:
+#      MTL_ENV_FILE=<키파일> PYTHONPATH=src python docs/run_demo.py
+# ③ 그 결과를 얹어 다시 찍는다.
 shoot 'docs\demo.html' 1280,1200 demo.png
 
 # 옵션 화면은 실물에서 파생시킨다 — 복사본을 두면 언젠가 어긋난다.

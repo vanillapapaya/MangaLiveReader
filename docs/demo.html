@@ -59,14 +59,14 @@
     <div class="head" style="left:60px; bottom:146px; width:54px; height:54px"></div>
     <div class="figure" style="right:78px; width:52px; height:126px"></div>
     <div class="head" style="right:72px; bottom:122px; width:60px; height:60px"></div>
-    <div class="bal" data-ko="또 여기서 만날 줄이야" style="left:150px; top:26px; width:150px; height:112px"><span>またここで<br>会うとはな</span></div>
+    <div class="bal" style="left:120px; top:14px; width:200px; height:210px"><span>またここで会うとはな</span></div>
   </div>
 
   <!-- ② 왼쪽 위 -->
   <div class="panel" style="left:24px; top:24px; width:414px; height:330px">
     <div class="sky"></div><div class="speed"></div>
     <div class="head" style="left:150px; bottom:60px; width:120px; height:120px"></div>
-    <div class="bal sq" data-ko="아직 얘기 안 끝났어" style="right:24px; top:30px; width:120px; height:150px"><span>まだ話は<br>終わってない</span></div>
+    <div class="bal sq" style="right:16px; top:18px; width:164px; height:246px"><span>まだ話は終わってない</span></div>
   </div>
 
   <!-- ③ 오른쪽 아래 (넓은 칸) -->
@@ -77,21 +77,21 @@
     <div class="head" style="left:204px; bottom:190px; width:72px; height:72px"></div>
     <div class="figure" style="right:250px; width:54px; height:168px"></div>
     <div class="head" style="right:244px; bottom:162px; width:66px; height:66px"></div>
-    <div class="sfx" data-ko="쿵" data-kind="sfx" style="left:392px; top:186px">ドッ</div>
-    <div class="bal" data-ko="오늘은 돌아가겠다" style="right:36px; top:34px; width:168px; height:126px"><span>今日は帰らせて<br>もらう</span></div>
+    <div class="sfx" style="left:392px; top:186px">ドッ</div>
+    <div class="bal" style="right:24px; top:20px; width:210px; height:230px"><span>今日は帰らせてもらう</span></div>
   </div>
 
   <!-- ④ 아래 두 칸 -->
   <div class="panel" style="left:462px; top:798px; width:414px; height:330px">
     <div class="sky"></div><div class="speed"></div>
     <div class="head" style="left:174px; bottom:96px; width:96px; height:96px"></div>
-    <div class="bal" data-ko="그 말, 잊지 마라" style="left:34px; top:26px; width:138px; height:104px"><span>その言葉、<br>忘れるなよ</span></div>
+    <div class="bal" style="left:22px; top:14px; width:194px; height:206px"><span>その言葉、忘れるなよ</span></div>
   </div>
   <div class="panel" style="left:24px; top:798px; width:414px; height:330px">
     <div class="sky"></div><div class="tone"></div>
     <div class="horizon" style="top:210px"></div>
     <div class="figure" style="left:170px; width:70px; height:212px"></div>
-    <div class="bal sq" data-ko="……가자" style="right:28px; bottom:28px; width:132px; height:120px"><span>……行こう</span></div>
+    <div class="bal sq" style="right:20px; bottom:18px; width:140px; height:190px"><span>もう行こう</span></div>
   </div>
 </div>
 
@@ -99,7 +99,9 @@
      여기서부터가 확장이 그리는 것. 구조·클래스·스타일 전부 실물과 같다.
      좌표만 위 가짜 페이지에 맞춰 손으로 넣었다.
      =================================================================== -->
-<div id="mlr-overlay" class="mlr-show-all">
+<!-- 라벨 크기는 옵션 화면에서 고르는 값이다 (9-20px). 그림용으로 16px.
+     mlr-show-extra 는 「효과음」을 켠 상태 — ドッ 박스가 그래서 보인다. -->
+<div id="mlr-overlay" class="mlr-show-all mlr-show-extra" style="--mlr-label-size:16px">
   <div id="mlr-status">완료 7486ms · 번역 4819ms</div>
 
   <div id="mlr-boxes"></div>
@@ -112,21 +114,33 @@
   </div>
 </div>
 
+<script src="demo-result.js"></script>
 <script>
-// **박스는 재서 놓는다.** 손으로 좌표를 넣었더니 말풍선에서 밀렸다 — 실제 확장도
-// 검출된 bbox 를 받아 놓는 것이지 사람이 적어 넣지 않는다.
-const boxes = document.getElementById("mlr-boxes");
-for (const el of document.querySelectorAll("[data-ko]")) {
-  const r = el.getBoundingClientRect();
-  const pad = 5;                       // 검출 박스는 글자보다 조금 넓게 잡힌다
-  const div = document.createElement("div");
-  div.className = "mlr-box " + (el.dataset.kind === "sfx" ? "mlr-sfx" : "mlr-translated");
-  Object.assign(div.style, {
-    left: `${r.left - pad}px`, top: `${r.top - pad}px`,
-    width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px`,
-  });
-  div.innerHTML = `<span class="mlr-label">${el.dataset.ko}</span>`;
-  boxes.appendChild(div);
+// **박스도 번역도 실물이다.** demo-result.js 는 docs/run_demo.py 가 이 페이지를
+// 검출 → OCR → 번역에 그대로 태워 만든 결과다. 좌표는 파이프라인이 낸 bbox 다.
+if (location.search.includes("bare")) {
+  document.getElementById("mlr-overlay").style.display = "none";
+} else if (window.MLR_RESULT) {
+  const boxes = document.getElementById("mlr-boxes");
+  for (const r of MLR_RESULT.regions) {
+    const [x, y, w, h] = r.bbox;
+    const div = document.createElement("div");
+    // content.js 와 같은 규칙: 말풍선 밖이면 mlr-sfx, 번역이 오면 mlr-translated
+    div.className = "mlr-box" + (r.is_bubble ? "" : " mlr-sfx") +
+                    (r.ko ? " mlr-translated" : "") +
+                    (r.kind === "sfx" || r.kind === "extra" ? ` mlr-kind-${r.kind}` : "");
+    Object.assign(div.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+    div.innerHTML = `<span class="mlr-label">${r.ko || r.ja}</span>`;
+    // 실제 앱은 layoutLabels() 가 겹침·화면 밖을 푼다. 여기서는 그중 두 가지만
+    // 흉내 낸다 — 아래쪽 박스는 라벨을 위로 붙이고, 오른쪽 끝에서는 폭을 줄인다.
+    // (CSS 에 이미 있는 훅이다: .mlr-label-above, --mlr-label-max)
+    if (y + h > innerHeight * 0.62) div.classList.add("mlr-label-above");
+    div.style.setProperty("--mlr-label-max", `${Math.max(120, Math.min(240, innerWidth - x - 12))}px`);
+    boxes.appendChild(div);
+  }
+  const t = MLR_RESULT.timings_ms;
+  document.getElementById("mlr-status").textContent =
+    `완료 ${t.detect + t.ocr + t.translate}ms · 번역 ${t.translate}ms`;
 }
 </script>
 </body>
