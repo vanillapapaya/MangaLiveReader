@@ -473,10 +473,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
  * 박스가 다 그려질 틈을 조금 준 뒤 한 번 찍는다. 오버레이를 숨기지 않으므로
  * 화면은 깜빡이지 않는다.
  */
-function refreshBaseline(tab) {
+function refreshBaseline(tab, tries = 5) {
   setTimeout(async () => {
     const st = watching.get(tab.id);
-    if (!st || st.busy) return;
+    if (!st) return;
+    // **읽는 중이면 포기하지 말고 다시 온다.**
+    //
+    // 예전에는 여기서 그냥 돌아갔다. 그런데 읽는 동안 쌓인 신호(`pending`)는
+    // 읽기가 끝나자마자 확인을 다시 돌리므로 `busy` 가 곧바로 다시 켜진다 —
+    // 그 틈에 깨어난 이 함수가 포기하면 **기준이 읽기 전 화면 그대로** 남는다.
+    // 그러면 방금 번역한 페이지가 "바뀐 것" 으로 판정돼 통째로 다시 읽히고,
+    // 그 사이 화면의 번역이 사라진다. 실제로 그 증상이 났다.
+    if (st.busy) {
+      if (tries > 0) refreshBaseline(tab, tries - 1);
+      return;
+    }
     try {
       const { ahash } = await prepare(tab, null, true, true);
       st.lastHash = ahash;
