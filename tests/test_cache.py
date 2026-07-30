@@ -124,3 +124,29 @@ def test_통계(cache) -> None:
     cache.put_ocr("2" * 16, "jumpplus", OCR)
     cache.put_translation("1" * 16, "natural", KO)
     assert cache.stats() == {"pages": 2, "translated": 1}
+
+
+def test_캡처_크기가_다르면_캐시를_안_쓴다(cache) -> None:
+    """저장된 bbox 는 그 캡처의 좌표계에 묶여 있다.
+
+    phash 는 퍼지 매칭이라 크기가 다른 캡처도 같은 행에 붙는다. 그대로 돌려주면
+    박스가 엉뚱한 자리에 그려진다 — 자동 번역에서 실제로 났다 (같은 행에 298,920
+    바이트와 409,896바이트 캡처가 붙었다).
+    """
+    cache.put_ocr("a" * 16, "jumpplus", OCR, (1200, 1800))
+
+    assert cache.get("a" * 16, "jumpplus", "natural", (1200, 1800)) is not None
+    assert cache.get("a" * 16, "jumpplus", "natural", (1400, 2100)) is None, (
+        "크기가 다르면 없는 것으로 쳐야 한다"
+    )
+    assert cache.get("a" * 16, "jumpplus", "natural") is not None, (
+        "크기를 안 주면 예전처럼 그냥 준다"
+    )
+
+
+def test_크기를_모르는_옛_행은_그대로_쓴다(cache) -> None:
+    """예전 DB 에는 크기 칸이 없다. 지우는 것보다 한 번 어긋나는 편이 낫고,
+    다음 저장에서 값이 채워진다."""
+    cache.put_ocr("b" * 16, "jumpplus", OCR)  # 크기 없이 저장 (옛 동작)
+
+    assert cache.get("b" * 16, "jumpplus", "natural", (1200, 1800)) is not None

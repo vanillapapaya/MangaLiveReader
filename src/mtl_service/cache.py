@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS page_cache (
     ocr_json    TEXT,
     trans_json  TEXT,
     mode        TEXT,
-    created_at  INTEGER
+    created_at  INTEGER,
+    -- 이 행을 만든 캡처의 크기. **좌표가 이 좌표계에 묶여 있다.**
+    -- 크기가 다른 캡처에 이 박스를 얹으면 자리가 어긋난다 (cache.get 참조).
+    img_w       INTEGER,
+    img_h       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_created ON page_cache(created_at);
 """
@@ -68,6 +72,12 @@ class PageCache:
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.executescript(_SCHEMA)
+            # 예전 DB 에는 크기 칸이 없다. 있으면 그냥 두고 없으면 더한다 —
+            # 값이 NULL 인 행은 크기를 모르므로 조회에서 쓰지 않는다.
+            have = {r[1] for r in self._db.execute("PRAGMA table_info(page_cache)")}
+            for col in ("img_w", "img_h"):
+                if col not in have:
+                    self._db.execute(f"ALTER TABLE page_cache ADD COLUMN {col} INTEGER")
             self._db.commit()
 
     def close(self) -> None:
@@ -76,11 +86,21 @@ class PageCache:
 
     # -- 조회 --------------------------------------------------------------
 
-    def get(self, phash: str, profile: str, mode: str) -> CacheHit | None:
+    def get(
+        self, phash: str, profile: str, mode: str, size: tuple[int, int] | None = None
+    ) -> CacheHit | None:
         """`phash` 에 해당하는 캐시. 없으면 None.
 
         `mode` 가 저장된 것과 다르면 OCR 만 살리고 번역은 None 으로 준다 —
         그래야 호출자가 검출·OCR 을 건너뛰고 번역만 다시 돌린다.
+
+        **`size` 가 저장된 캡처 크기와 다르면 없는 것으로 친다.** 저장된 bbox 는
+        그 캡처의 좌표계에 묶여 있는데, phash 는 퍼지 매칭이라 크기가 다른 캡처도
+        같은 행에 붙는다. 그대로 돌려주면 박스가 엉뚱한 자리에 그려진다.
+
+        실제로 그렇게 났다 — 자동 번역에서 스크롤로 잘리는 범위가 달라지자
+        같은 행에 298,920바이트와 409,896바이트 캡처가 붙었고, 박스가 어긋난 채
+        나왔다. 「갱신」을 누르면 맞는 이유가 그것이다 (캐시를 버리고 다시 잰다).
         """
         with self._lock:
             row = self._db.execute(
@@ -93,6 +113,11 @@ class PageCache:
 
         if row is None:
             return None
+        # 크기를 아는 행끼리만 비교한다. 예전 DB 의 NULL 행은 그냥 통과시킨다 —
+        # 지우는 것보다 한 번 어긋나는 편이 낫고, 다음 저장에서 값이 채워진다.
+        if size and row["img_w"] and row["img_h"]:
+            if (int(row["img_w"]), int(row["img_h"])) != (int(size[0]), int(size[1])):
+                return None
         return CacheHit(
             phash=row["phash"],
             ocr=json.loads(row["ocr_json"]) if row["ocr_json"] else [],
@@ -120,18 +145,36 @@ class PageCache:
 
     # -- 저장 --------------------------------------------------------------
 
-    def put_ocr(self, phash: str, profile: str, ocr: list[dict[str, Any]]) -> None:
-        """OCR 결과를 넣는다. 이미 있으면 번역은 건드리지 않고 OCR 만 갱신한다."""
+    def put_ocr(
+        self,
+        phash: str,
+        profile: str,
+        ocr: list[dict[str, Any]],
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        """OCR 결과를 넣는다. 이미 있으면 번역은 건드리지 않고 OCR 만 갱신한다.
+
+        `size` 는 이 좌표를 만든 캡처의 크기다. 조회할 때 같은 크기인지 본다.
+        """
         with self._lock:
             self._db.execute(
                 """
-                INSERT INTO page_cache (phash, profile, ocr_json, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO page_cache (phash, profile, ocr_json, created_at, img_w, img_h)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(phash) DO UPDATE SET
                     ocr_json = excluded.ocr_json,
-                    profile  = excluded.profile
+                    profile  = excluded.profile,
+                    img_w    = excluded.img_w,
+                    img_h    = excluded.img_h
                 """,
-                (phash, profile, json.dumps(ocr, ensure_ascii=False), int(time.time())),
+                (
+                    phash,
+                    profile,
+                    json.dumps(ocr, ensure_ascii=False),
+                    int(time.time()),
+                    int(size[0]) if size else None,
+                    int(size[1]) if size else None,
+                ),
             )
             self._db.commit()
 

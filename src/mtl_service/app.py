@@ -314,7 +314,8 @@ async def _read_events(
         model_name = resolve_model(parsed.model)
         cache_mode = f"{parsed.mode}|{model_name}"
 
-        hit = None if skip_read else _cache.get(parsed.phash, parsed.profile, cache_mode)
+        size = (int(img.shape[1]), int(img.shape[0]))
+        hit = None if skip_read else _cache.get(parsed.phash, parsed.profile, cache_mode, size)
         yield sse("cached", {"hit": hit is not None, "fuzzy": bool(hit and hit.fuzzy)})
 
         if hit is not None:
@@ -334,7 +335,7 @@ async def _read_events(
             #
             # 게다가 같은 크롭을 다시 요청할 일도 없다. 쓰면 위험만 늘고 이득이 없다.
             if not parsed.no_cache:
-                _cache.put_ocr(parsed.phash, parsed.profile, regions)
+                _cache.put_ocr(parsed.phash, parsed.profile, regions, size)
 
         yield sse("ocr", {"regions": regions})
 
@@ -371,7 +372,7 @@ async def _read_events(
                     await asyncio.wait_for(waiting.wait(), timeout=90)
                 except (TimeoutError, asyncio.TimeoutError):
                     pass
-                again = _cache.get(parsed.phash, parsed.profile, cache_mode)
+                again = _cache.get(parsed.phash, parsed.profile, cache_mode, size)
                 if again is not None and again.translation is not None:
                     for tr in again.translation:
                         yield sse("translation", tr)
