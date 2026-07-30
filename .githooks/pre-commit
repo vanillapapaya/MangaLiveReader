@@ -29,13 +29,16 @@ done < <(git diff --cached --name-only --diff-filter=ACMR)
 # **줄 내용을 출력하지 않는다.** 그 줄에 키가 들어 있고, 훅 출력은 터미널과
 # 로그에 남는다. 파일과 줄 번호만 알려 준다 (env.py 가 같은 이유로 그렇게 한다).
 # ---------------------------------------------------------------------------
+# 토큰 자리의 값은 **플레이스홀더가 아닐 때만** 잡는다. 문서의 `"<공유 시크릿>"`,
+# `여기에_키_붙여넣기` 같은 것을 잡으면 훅이 늑대 소년이 되어 아무도 안 듣는다.
+# 그래서 값에 공백·꺾쇠·말줄임이 없고 12자 이상일 때만 실키로 본다.
 patterns=(
   'sk-ant-[A-Za-z0-9_-]{20,}'      # Anthropic
   'AIza[0-9A-Za-z_-]{30,}'         # Google
   'sk-[A-Za-z0-9]{40,}'            # OpenAI 형태
   'gh[pousr]_[A-Za-z0-9]{30,}'     # GitHub 토큰
-  'MTL_AUTH_TOKEN[[:space:]]*=[[:space:]]*[^[:space:]"'"'"']{8,}'
-  'auth_token[[:space:]]*=[[:space:]]*"[^"]{8,}"'
+  'MTL_AUTH_TOKEN[[:space:]]*=[[:space:]]*[A-Za-z0-9_.=+/-]{12,}'
+  'auth_token[[:space:]]*=[[:space:]]*"[A-Za-z0-9_.=+/-]{12,}"'
 )
 
 for f in $(git diff --cached --name-only --diff-filter=ACMR); do
