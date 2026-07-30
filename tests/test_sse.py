@@ -40,6 +40,11 @@ def client(tmp_path, monkeypatch):
 
     cache = PageCache(tmp_path / "t.sqlite3", fuzzy_hamming=3, retention_days=90)
     monkeypatch.setattr(app_module, "_cache", cache)
+    # **개인 설정이 테스트에 새어 들어오지 않게 한다.** `app.cfg` 는 import 시점에
+    # `service.toml` + `service.local.toml` 을 읽는다. 개발자가 자기 기계에서 인증을
+    # 켜 두면 여기 요청이 전부 401 이 되어, 라우팅 테스트가 인증 테스트로 변한다.
+    # (실제로 그렇게 깨졌다.) 인증은 아래 전용 테스트에서 따로 본다.
+    monkeypatch.setattr(app_module.cfg.server, "auth_disabled", True)
     # **`with` 를 쓰지 않는다.** 컨텍스트 매니저로 쓰면 lifespan 이 돌아 GPU 예열이
     # 시작되고(모델 로드 수 초), 종료 시 모듈 전역 `_gpu` 가 닫혀서 다음 테스트가
     # "cannot schedule new futures after shutdown" 으로 죽는다. 라우팅만 볼 것이므로
@@ -223,3 +228,13 @@ def test_sse_프레임_형식() -> None:
     assert frame == 'event: ocr\ndata: {"a": 1}\n\n'
     # data 는 반드시 한 줄이어야 한다 — 개행이 섞이면 프레임이 쪼개진다
     assert app_module.sse("x", {"t": "여러\n줄"}).count("\n") == 3
+
+
+def test_인증을_켜면_토큰_없이는_막힌다(client, monkeypatch) -> None:
+    """개인 설정이 새어 들어와 테스트가 깨진 적이 있다. 그 동작을 여기서 못 박는다."""
+    c, _ = client
+    monkeypatch.setattr(app_module.cfg.server, "auth_disabled", False)
+    monkeypatch.setattr(app_module.cfg.server, "auth_token", "비밀")
+
+    assert post(c, "a" * 16).status_code == 401
+    assert c.get("/health").status_code == 200, "상태 확인은 토큰 없이 된다"

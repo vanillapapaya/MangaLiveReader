@@ -72,6 +72,17 @@ _COMMON = """\
   판단 근거는 **원문 자체다.** 더듬는 말투(「い、家で…」), 물음, 호칭, 종결어미가
   있으면 인물이 말하는 것이다. 위치 정보는 주지 않으니 글만 보고 정해라.
 
+출력 예시 — `ko` 에는 **번역 문장**이 들어간다. 분류 이름을 넣는 것이 아니다.
+`note` 는 비워 두는 것이 기본이다.
+
+```json
+{"regions": [
+  {"id": 0, "ko": "또 여기서 만날 줄이야", "kind": "dialogue", "note": ""},
+  {"id": 1, "ko": "쾅", "kind": "sfx", "note": ""},
+  {"id": 2, "ko": "그리고 사흘 뒤", "kind": "narration", "note": ""}
+]}
+```
+
 """
 
 PROMPTS = {
@@ -98,7 +109,13 @@ RESPONSE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "integer", "description": "입력에서 받은 region id"},
-                    "ko": {"type": "string", "description": "한국어 번역문"},
+                    "ko": {
+                        "type": "string",
+                        "description": (
+                            "한국어 번역문. **분류 이름이 아니라 실제 번역 문장이다.** "
+                            "여기에 'dialogue' 같은 값을 넣으면 안 된다"
+                        ),
+                    },
                     "kind": {
                         "type": "string",
                         "enum": ["dialogue", "sfx", "narration", "extra"],
@@ -106,7 +123,10 @@ RESPONSE_SCHEMA = {
                     },
                     "note": {
                         "type": "string",
-                        "description": "특이사항. 없으면 빈 문자열. OCR 오인식은 'ocr_noise'",
+                        "description": (
+                            "특이사항만 짧게. **기본은 빈 문자열이다** — 번역 이유나 "
+                            "해설을 쓰는 칸이 아니다. OCR 오인식은 'ocr_noise'"
+                        ),
                     },
                 },
                 "required": ["id", "ko", "kind", "note"],
