@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Manga Live Reader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "만화 뷰어 화면을 캡처해 자기 mtl-service 로 보내고 번역을 그 위에 겹쳐 보인다.",
 
   "permissions": ["activeTab", "scripting", "storage"],

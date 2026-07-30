@@ -183,6 +183,10 @@ local_base_url = "http://100.x.y.z:11434/v1"
 기본은 루프백 바인딩 + 인증 없음. 이 기계 안에서만 붙으므로 안전.
 공유 시크릿은 `service.toml` 이 아니라 `MTL_AUTH_TOKEN` 으로 줌 (아래 ② 참고).
 
+**누가 발급해 주는 값이 아니다.** 서비스와 확장이 나눠 갖는 암호 한 줄이고, 내가
+정하면 그만이다. 아무 문자열이나 되지만 길고 무작위인 편이 낫다. API 키와 무관하고
+돈도 들지 않는다.
+
 인증을 켜 놓고 토큰이 없으면 기동 거부. 요청마다 500 을 내는 것보다 나음.
 
 ## 서비스 여는 법
@@ -222,9 +226,18 @@ bind_host = ""                # 비우면 Tailscale 주소를 찾음. LAN 이면
 auth_disabled = false         # 밖에서 붙으면 인증 켜기
 ```
 
-토큰을 만들어 키 파일에 넣음:
+토큰을 만들어 키 파일에 넣음. 값은 내가 정하는 것이라 아래처럼 무작위로 뽑아도 되고,
+직접 타이핑해도 된다:
+
+```powershell
+# 윈도우
+$t = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | % {[char]$_})
+Add-Content "$env:USERPROFILE\.config\mangalivereader\env" "MTL_AUTH_TOKEN=$t"
+$t   # 이 값을 확장 옵션에 넣는다
+```
 
 ```bash
+# 맥·리눅스
 printf 'MTL_AUTH_TOKEN=%s\n' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')" \
   >> ~/.config/mangalivereader/env
 ```
