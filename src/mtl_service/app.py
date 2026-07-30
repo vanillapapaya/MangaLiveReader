@@ -16,6 +16,7 @@ I/O 라 별도 스레드에서 돈다. 번역이 9초 걸리는 동안 GPU 워�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -84,39 +85,52 @@ def base_url_for(model: str) -> str | None:
     return cfg.api.local_base_url or None if model == cfg.api.local_model else None
 
 
+#: 확장이 보낸 키로 만든 번역기를 몇 개까지 들고 있을지. 기기 몇 대면 충분하다.
+_BYOK_CACHE_MAX = 8
+
+
+def _cache_key(name: str, api_key: str | None) -> str:
+    """캐시 키. **키 값 자체를 쓰지 않는다** — 키가 로그·예외에 섞여 나갈 수 있다.
+
+    앞 16자만 써도 충돌은 실질적으로 없고(2^64), 원문은 복원되지 않는다.
+    """
+    if not api_key:
+        return name
+    return f"{name}|{hashlib.sha256(api_key.encode()).hexdigest()[:16]}"
+
+
 async def get_translator(
     model: str | None = None, api_key: str | None = None
 ) -> translate.Translator | None:
     """번역기를 준다. 없으면 None (OCR 만 돌린다).
 
-    확장이 키를 보내면(`X-Api-Key`) 그 키로 **매번 새로 만든다.** 캐시하지 않는다 —
-    사람마다 키가 다른데 모델 이름으로만 캐시하면 남의 키로 부르게 된다.
+    확장이 키를 보내면(`X-Api-Key`) **키 해시까지 넣어 캐시한다.**
+
+    처음에는 아예 캐시하지 않았다 — 모델 이름으로만 캐시하면 남의 키로 부르게
+    되기 때문이다. 그런데 그러면 요청마다 SDK 클라이언트가 새로 생기고, 그 안의
+    HTTP 커넥션 풀도 매번 새로 열린다. 키를 키의 일부로 넣으면 둘 다 만족한다.
     """
     name = resolve_model(model)
-    if api_key:
-        try:
-            kwargs = {"effort": cfg.api.effort} if name.startswith("claude-") else {}
-            return translate.get_translator(
-                name, api_key=api_key, base_url=base_url_for(name), **kwargs
-            )
-        except Exception as exc:
-            print(f"[warn] 보내 온 키로 {name} 번역기를 못 만들었다: {exc}")
-            return None
-    got = _translators.get(name)
+    key = _cache_key(name, api_key)
+    got = _translators.get(key)
     if got is not None:
         return got
     async with _translator_lock:
-        if name in _translators:
-            return _translators[name]
+        if key in _translators:
+            return _translators[key]
         try:
             kwargs = {"effort": cfg.api.effort} if name.startswith("claude-") else {}
-            _translators[name] = translate.get_translator(
-                name, base_url=base_url_for(name), **kwargs
+            _translators[key] = translate.get_translator(
+                name, api_key=api_key, base_url=base_url_for(name), **kwargs
             )
         except Exception as exc:  # 키 없음 등
             print(f"[warn] {name} 번역기를 못 만들었다 — OCR 만 제공한다: {exc}")
             return None
-    return _translators[name]
+        # 보내 온 키로 만든 것만 개수를 묶는다. 기기가 늘어도 무한정 쌓이지 않게.
+        byok = [k for k in _translators if "|" in k]
+        while len(byok) > _BYOK_CACHE_MAX:
+            _translators.pop(byok.pop(0), None)
+    return _translators[key]
 
 # ---------------------------------------------------------------------------
 # GPU 전용 상주 워커

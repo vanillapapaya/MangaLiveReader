@@ -238,3 +238,36 @@ def test_인증을_켜면_토큰_없이는_막힌다(client, monkeypatch) -> Non
 
     assert post(c, "a" * 16).status_code == 401
     assert c.get("/health").status_code == 200, "상태 확인은 토큰 없이 된다"
+
+
+def test_보내_온_키가_다르면_번역기를_따로_만든다(monkeypatch) -> None:
+    """키를 캐시 키에 넣지 않으면 **남의 키로 부르게 된다.**
+
+    그렇다고 캐시를 아예 끄면 요청마다 HTTP 커넥션 풀이 새로 열린다. 키 해시까지
+    넣어 캐시하면 둘 다 만족한다.
+    """
+    import asyncio
+
+    made = []
+
+    def fake(name, api_key=None, base_url=None, **kw):
+        made.append((name, api_key))
+        return object()
+
+    monkeypatch.setattr(app_module.translate, "get_translator", fake)
+    monkeypatch.setattr(app_module, "_translators", {})
+
+    async def go():
+        await app_module.get_translator("gemini-3.6-flash", "키-가")
+        await app_module.get_translator("gemini-3.6-flash", "키-가")  # 같은 키 → 재사용
+        await app_module.get_translator("gemini-3.6-flash", "키-나")  # 다른 키 → 새로
+
+    asyncio.run(go())
+    assert [k for _, k in made] == ["키-가", "키-나"], "같은 키는 한 번만 만든다"
+
+
+def test_캐시_키에_키_값이_그대로_들어가지_않는다() -> None:
+    """캐시 키는 로그·예외에 섞여 나갈 수 있다. 원문을 넣지 않는다."""
+    key = app_module._cache_key("claude-sonnet-5", "sk-ant-매우비밀")
+    assert "매우비밀" not in key and "sk-ant" not in key
+    assert key.startswith("claude-sonnet-5|")
