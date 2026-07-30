@@ -107,7 +107,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // 절반 넘게 보이면 "같은 페이지를 계속 보는 중" 이라 재사용하고, 그 아래로
           // 내려가면 새로 찾는다.
           if (seen / whole > 0.5 && rect.width > 50 && rect.height > 50) {
-            sendResponse({ rect, tag: "고정", dpr: dpr(), count: live.length });
+            // `full` 은 **뷰포트로 자르기 전** 뷰어 사각형이다. 캐시가 좌표를
+            // 되돌릴 때 기준으로 쓴다 — 잘린 rect 로는 스크롤 위치가 섞인다.
+            sendResponse({
+              rect, full: { x: u.left, y: u.top, width: u.right - u.left, height: u.bottom - u.top },
+              tag: "고정", dpr: dpr(), count: live.length,
+            });
             return true;
           }
         }
@@ -216,6 +221,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const b = overlay().querySelector("#mlr-boxes");
         if (b) b.style.transform = "";
       }
+      // 캐시에서 온 좌표면 그 기준 사각형이 같이 온다. 없으면 이번 캡처 좌표다.
+      ctx.cachedViewer = msg.data.cached_viewer || null;
       {
         const drawn = drawBoxes(msg.data.regions);
         const old = document.querySelector('.mlr-box[data-replacing="1"]');
@@ -296,7 +303,8 @@ function probeViewer() {
   }
 
   if (cands.length === 0) {
-    return { rect: { x: 0, y: 0, width: vw, height: vh }, tag: "viewport(폴백)", dpr: dpr(), count: 0 };
+    const whole = { x: 0, y: 0, width: vw, height: vh };
+    return { rect: whole, full: whole, tag: "viewport(폴백)", dpr: dpr(), count: 0 };
   }
 
   // **씨앗은 뷰포트 중앙에 가장 가까운 것으로 고른다.** 면적으로 고르면 안 된다 —
@@ -344,7 +352,7 @@ function probeViewer() {
   const rect = clampToViewport(unionRects(group.map((c) => c.r)), vw, vh);
   const tag =
     seed.el.tagName.toLowerCase() + (group.length > 1 ? ` ×${group.length}` : "");
-  return { rect, tag, dpr: dpr(), count: group.length };
+  return { rect, full: rect, tag, dpr: dpr(), count: group.length };
 }
 
 //: 띠끼리 이 정도까지 벌어져도 한 페이지로 본다. 실측에서는 3px 겹쳐 있었다.

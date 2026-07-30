@@ -650,6 +650,21 @@ async function run(tab, override = null, prepared = null, opts = {}) {
               Math.round(probe.clip.height * probe.dpr * scale),
             ]
           : null,
+      // **좌표를 되돌릴 기준.** 뷰어 사각형(자르기 전)을 전송 이미지 좌표로 넘긴다.
+      //
+      // 캐시는 phash 로 찾는데 그건 퍼지 매칭이라 **크기가 다른 캡처도 같은 행에
+      // 붙는다.** 저장된 bbox 는 그때 캡처의 좌표계라 그대로 얹으면 어긋난다.
+      // 이 사각형을 같이 저장해 두면, 나중 캡처에서 비율로 환산해 제자리에 놓을 수
+      // 있다 — 다시 번역하지 않아도 된다 (content.js 의 `fromCachedFrame`).
+      viewer:
+        probe.full && probe.rect
+          ? [
+              Math.round((probe.full.x - probe.rect.x) * probe.dpr * scale),
+              Math.round((probe.full.y - probe.rect.y) * probe.dpr * scale),
+              Math.round(probe.full.width * probe.dpr * scale),
+              Math.round(probe.full.height * probe.dpr * scale),
+            ]
+          : null,
     };
     const form = new FormData();
     form.append("image", blob, "page.jpg");

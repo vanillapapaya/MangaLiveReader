@@ -150,3 +150,23 @@ def test_크기를_모르는_옛_행은_그대로_쓴다(cache) -> None:
     cache.put_ocr("b" * 16, "jumpplus", OCR)  # 크기 없이 저장 (옛 동작)
 
     assert cache.get("b" * 16, "jumpplus", "natural", (1200, 1800)) is not None
+
+
+def test_기준_사각형이_있으면_크기가_달라도_준다(cache) -> None:
+    """좌표를 되돌릴 기준이 있으면 캐시를 버릴 이유가 없다.
+
+    클라이언트가 `fromCachedFrame` 으로 뷰어 대비 비율을 내 다시 놓는다 —
+    다시 번역하지 않는다.
+    """
+    cache.put_ocr("c" * 16, "jumpplus", OCR, (1200, 1800), [10, 20, 1000, 1600])
+
+    hit = cache.get("c" * 16, "jumpplus", "natural", (1400, 2100))
+    assert hit is not None, "기준이 있으면 크기가 달라도 준다"
+    assert hit.viewer == [10, 20, 1000, 1600]
+
+
+def test_기준이_없고_크기가_다르면_안_준다(cache) -> None:
+    """되돌릴 방법이 없으면 어긋난 좌표를 주느니 다시 재는 편이 낫다."""
+    cache.put_ocr("d" * 16, "jumpplus", OCR, (1200, 1800))  # viewer 없음
+
+    assert cache.get("d" * 16, "jumpplus", "natural", (1400, 2100)) is None

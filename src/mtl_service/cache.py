@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS page_cache (
     -- 이 행을 만든 캡처의 크기. **좌표가 이 좌표계에 묶여 있다.**
     -- 크기가 다른 캡처에 이 박스를 얹으면 자리가 어긋난다 (cache.get 참조).
     img_w       INTEGER,
-    img_h       INTEGER
+    img_h       INTEGER,
+    -- 뷰어 사각형(전송 이미지 좌표). 좌표를 되돌리는 기준이다.
+    viewer_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_created ON page_cache(created_at);
 """
@@ -49,6 +51,8 @@ class CacheHit:
     translation: list[dict[str, Any]] | None
     #: 정확 일치가 아니라 근사 매칭이었는가. 계측·디버깅용.
     fuzzy: bool
+    #: 이 좌표가 묶여 있는 뷰어 사각형 (전송 이미지 좌표). 모르면 None.
+    viewer: list[int] | None = None
 
 
 def hamming(a: str, b: str) -> int:
@@ -75,9 +79,10 @@ class PageCache:
             # 예전 DB 에는 크기 칸이 없다. 있으면 그냥 두고 없으면 더한다 —
             # 값이 NULL 인 행은 크기를 모르므로 조회에서 쓰지 않는다.
             have = {r[1] for r in self._db.execute("PRAGMA table_info(page_cache)")}
-            for col in ("img_w", "img_h"):
+            for col in ("img_w", "img_h", "viewer_json"):
                 if col not in have:
-                    self._db.execute(f"ALTER TABLE page_cache ADD COLUMN {col} INTEGER")
+                    kind = "TEXT" if col.endswith("_json") else "INTEGER"
+                    self._db.execute(f"ALTER TABLE page_cache ADD COLUMN {col} {kind}")
             self._db.commit()
 
     def close(self) -> None:
@@ -113,11 +118,15 @@ class PageCache:
 
         if row is None:
             return None
-        # 크기를 아는 행끼리만 비교한다. 예전 DB 의 NULL 행은 그냥 통과시킨다 —
-        # 지우는 것보다 한 번 어긋나는 편이 낫고, 다음 저장에서 값이 채워진다.
+        viewer = json.loads(row["viewer_json"]) if row["viewer_json"] else None
+        # 크기가 다른 캡처에는 좌표를 그대로 못 쓴다.
+        #
+        # **기준 사각형이 있으면 클라이언트가 환산한다** (content.js `fromCachedFrame`).
+        # 없으면 — 예전 DB 행이거나 뷰어를 못 찾은 캡처 — 어긋나느니 없는 것으로 친다.
         if size and row["img_w"] and row["img_h"]:
             if (int(row["img_w"]), int(row["img_h"])) != (int(size[0]), int(size[1])):
-                return None
+                if not viewer:
+                    return None
         return CacheHit(
             phash=row["phash"],
             ocr=json.loads(row["ocr_json"]) if row["ocr_json"] else [],
@@ -127,6 +136,7 @@ class PageCache:
                 else None
             ),
             fuzzy=fuzzy,
+            viewer=viewer,
         )
 
     def _nearest(self, phash: str, profile: str) -> sqlite3.Row | None:
@@ -151,6 +161,7 @@ class PageCache:
         profile: str,
         ocr: list[dict[str, Any]],
         size: tuple[int, int] | None = None,
+        viewer: list[int] | None = None,
     ) -> None:
         """OCR 결과를 넣는다. 이미 있으면 번역은 건드리지 않고 OCR 만 갱신한다.
 
@@ -159,13 +170,15 @@ class PageCache:
         with self._lock:
             self._db.execute(
                 """
-                INSERT INTO page_cache (phash, profile, ocr_json, created_at, img_w, img_h)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO page_cache
+                    (phash, profile, ocr_json, created_at, img_w, img_h, viewer_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(phash) DO UPDATE SET
-                    ocr_json = excluded.ocr_json,
-                    profile  = excluded.profile,
-                    img_w    = excluded.img_w,
-                    img_h    = excluded.img_h
+                    ocr_json    = excluded.ocr_json,
+                    profile     = excluded.profile,
+                    img_w       = excluded.img_w,
+                    img_h       = excluded.img_h,
+                    viewer_json = excluded.viewer_json
                 """,
                 (
                     phash,
@@ -174,6 +187,7 @@ class PageCache:
                     int(time.time()),
                     int(size[0]) if size else None,
                     int(size[1]) if size else None,
+                    json.dumps(viewer) if viewer else None,
                 ),
             )
             self._db.commit()

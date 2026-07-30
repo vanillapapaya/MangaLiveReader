@@ -422,7 +422,8 @@ function drawBoxes(regions) {
   const vrect = viewerRect();
   let drawn = 0;
   for (const r of regions) {
-    const p = toCss(r.bbox);
+    // 캐시에서 온 좌표는 그때 기준으로 환산한다 (content.js `fromCachedFrame`).
+    const p = ctx.cachedViewer ? fromCachedFrame(r.bbox, ctx.cachedViewer, vrect) : toCss(r.bbox);
     // 검출기에 문맥을 주려고 넓게 보냈으므로, 고른 범위 밖의 것은 버린다.
     // 중심으로 판정한다 — 경계에 걸친 박스를 통째로 버리면 고른 말풍선이 사라진다.
     if (ctx.clip && !inClip(p, ctx.clip)) continue;

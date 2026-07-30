@@ -335,9 +335,13 @@ async def _read_events(
             #
             # 게다가 같은 크롭을 다시 요청할 일도 없다. 쓰면 위험만 늘고 이득이 없다.
             if not parsed.no_cache:
-                _cache.put_ocr(parsed.phash, parsed.profile, regions, size)
+                _cache.put_ocr(parsed.phash, parsed.profile, regions, size, parsed.viewer)
 
-        yield sse("ocr", {"regions": regions})
+        # **캐시에서 왔으면 기준 사각형을 같이 준다.** 클라이언트가 그것으로 지금
+        # 화면에 맞게 환산한다 (다시 번역하지 않는다). 새로 잰 좌표는 이번 캡처의
+        # 좌표계라 기준이 필요 없다.
+        cached_viewer = hit.viewer if (hit and hit.ocr and not skip_read) else None
+        yield sse("ocr", {"regions": regions, "cached_viewer": cached_viewer})
 
         # **번역할 것만 남긴다.** 「영역」·「다시 읽기」는 검출기에 문맥을 주려고 고른
         # 것보다 3배 넓게 잘라 보낸다. 예전에는 그 안을 전부 번역하고 클라이언트가
