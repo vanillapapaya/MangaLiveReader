@@ -74,6 +74,9 @@
     applyShift(label, 3, 4);                       // boxes.js
     layoutLabels();                                // boxes.js
     hasSpeech(box);                                // speak.js
+    // 캐시 좌표 환산. 정의가 빠져 있어 캐시 적중 때마다 박스가 통째로 안 그려진
+    // 적이 있다 (파일을 나눌 때 다른 파일로 갔다). 여기서 부른다.
+    fromCachedFrame([10, 10, 50, 50], [0, 0, 100, 100], { x: 0, y: 0, width: 200, height: 200 });
   }
 
   setTimeout(() => {

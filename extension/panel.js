@@ -378,6 +378,32 @@ function status(text, isError = false) {
  * 여기에 뷰어 사각형의 원점을 더하면 끝이다. **추측이 하나도 없다** —
  * scale 과 dpr 을 우리가 직접 정했기 때문이다.
  */
+/** 캐시에서 온 좌표를 지금 화면에 맞게 옮긴다.
+ *
+ * 캐시는 phash 로 찾는데 퍼지 매칭이라 **크기가 다른 캡처도 같은 행에 붙는다.**
+ * 저장된 bbox 는 그때 캡처의 이미지 좌표계라 `toCss` 로 바로 풀면 어긋난다.
+ * 서버가 그 좌표의 기준(그때 뷰어 사각형)을 같이 주므로, 뷰어 대비 비율을 내
+ * 지금 사각형에 다시 곱한다. 근사가 아니라 같은 기준으로 되돌리는 것이다.
+ *
+ * **화면 밖으로 나가면 환산을 믿지 않는다.** 기준이 어긋나면 박스가 뷰포트 밖으로
+ * 날아가 번역이 통째로 사라진 것처럼 보인다. 그럴 바에는 이번 캡처 좌표로 그리는
+ * 편이 낫다 — 조금 어긋나도 보이기는 한다.
+ */
+function fromCachedFrame([x, y, w, h], base, now) {
+  if (!base || !now || !base[2] || !base[3]) return toCss([x, y, w, h]);
+  const [bx, by, bw, bh] = base;
+  const p = {
+    left: now.x + ((x - bx) / bw) * now.width,
+    top: now.y + ((y - by) / bh) * now.height,
+    width: (w / bw) * now.width,
+    height: (h / bh) * now.height,
+  };
+  const sane =
+    Number.isFinite(p.left) && Number.isFinite(p.top) && p.width > 0 && p.height > 0 &&
+    p.left < innerWidth && p.top < innerHeight && p.left + p.width > 0 && p.top + p.height > 0;
+  return sane ? p : toCss([x, y, w, h]);
+}
+
 function toCss([x, y, w, h]) {
   const k = 1 / (ctx.scale * ctx.dpr);
   return {
