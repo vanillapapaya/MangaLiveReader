@@ -332,12 +332,34 @@ function viewerSignals() {
   };
 }
 
+/** 이 페이지가 세로로 내려 읽는 것인가.
+ *
+ * 네 사이트 실측 (2026-08-01, `⋯ → 진단`):
+ *
+ *   사이트          스크롤  이미지  세로정렬  넓은것  canvas
+ *   harta            70.1     48      47       48      0     ← 세로
+ *   yanmaga           1.0   27~51      2        0      0
+ *   ganganonline      1.0    4~6       0        0      0
+ *   comic-walker      2.9      1       0        1     19
+ *
+ * **스크롤 배수로는 가를 수 없다.** comic-walker 가 2.9 라 "2배 넘으면 세로" 는
+ * 곧바로 틀린다. 갈라 주는 것은 **세로로 이어진 넓은 이미지의 수**다 — harta 47,
+ * 나머지 0~2.
+ *
+ * yanmaga 의 이미지 27~51장은 전부 `wide` 가 0 이다 (섬네일·UI). 스크롤할수록
+ * 늘어나는 것도 지연 로딩일 뿐이다. 넓이 조건이 그 잡음을 걸러 준다.
+ */
+function isVerticalReader(s = viewerSignals()) {
+  return s.stacked >= 3 && s.wide >= 3;
+}
+
 /** 상태줄에 한 줄로. 판정은 아직 하지 않는다 — 숫자만 본다. */
 function reportSignals() {
   const s = viewerSignals();
   status(
     `스크롤 ${s.scrollRatio}배 · 이미지 ${s.imgs}장(세로 ${s.stacked}) · ` +
-      `넓은 것 ${s.wide} · canvas ${s.canvases}`
+      `넓은 것 ${s.wide} · canvas ${s.canvases} → ` +
+      (isVerticalReader(s) ? "세로 스크롤" : "가로 넘김")
   );
   return s;
 }
