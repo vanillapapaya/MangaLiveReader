@@ -442,7 +442,11 @@ function drawBoxes(regions) {
   let drawn = 0;
   for (const r of regions) {
     // 캐시에서 온 좌표는 그때 기준으로 환산한다 (content.js `fromCachedFrame`).
-    const p = ctx.cachedViewer ? fromCachedFrame(r.bbox, ctx.cachedViewer, vrect) : toCss(r.bbox);
+    // 기준은 **이번 캡처가 쓴 사각형**이다. 여기서 다시 재면 뒤로 돌아갔을 때
+    // 뷰어 요소가 갈려 엉뚱한 값이 나온다 (박스가 화면 밖으로 날아갔다).
+    const p = ctx.cachedViewer
+      ? fromCachedFrame(r.bbox, ctx.cachedViewer, ctx.viewerFull || vrect)
+      : toCss(r.bbox);
     // 검출기에 문맥을 주려고 넓게 보냈으므로, 고른 범위 밖의 것은 버린다.
     // 중심으로 판정한다 — 경계에 걸친 박스를 통째로 버리면 고른 말풍선이 사라진다.
     if (ctx.clip && !inClip(p, ctx.clip)) continue;

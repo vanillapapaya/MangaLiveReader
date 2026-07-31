@@ -176,6 +176,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // 경우(우클릭 → 다시 읽기)는 지우면 안 되므로 접두사로 갈라 둔다.
       ctx = {
         rect: msg.rect,
+        viewerFull: msg.viewerFull || null,
         scale: msg.scale,
         dpr: msg.dpr,
         prefix: msg.prefix || "",

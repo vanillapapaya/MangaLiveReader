@@ -745,6 +745,10 @@ async function run(tab, override = null, prepared = null, opts = {}) {
     // 좌표 환산에 필요한 값을 먼저 보낸다. 서비스 bbox 는 전송 이미지 좌표계다.
     say("begin", {
       rect: probe.rect,
+      // **이번 캡처가 기준으로 삼은 뷰어 사각형(자르기 전).** 캐시 좌표를 되돌릴 때
+      // 쓴다. 콘텐츠 스크립트가 `viewerRect()` 로 다시 재면 안 된다 — 뒤로 돌아가면
+      // 뷰어 요소가 갈려 엉뚱한 값이 나오고, 박스가 화면 밖으로 날아간다.
+      viewerFull: probe.full ?? null,
       scale,
       dpr: probe.dpr,
       merge: probe.merge ?? null,
