@@ -33,6 +33,7 @@ const PANEL_MORE = [
   { act: "status", label: "상태", key: null, desc: "왼쪽 위 진행 표시" },
   { act: "hide", label: "숨김", key: "`", desc: "잠깐 걷어내고 그림 보기", sub: "백틱은 누르는 동안만" },
   { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지 캐시만 버리기", sub: "다시 읽지는 않는다" },
+  { act: "signals", label: "진단", key: null, desc: "이 페이지가 어떤 뷰어인지 재본다", sub: "판정 경계를 정하려고 모으는 중" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -275,6 +276,10 @@ function bindPanel(root) {
         break;
       case "drop":
         send({ type: "purge-page" });
+        break;
+      case "signals":
+        // 값만 찍는다. 동작은 바꾸지 않는다 (content.js 의 `reportSignals`).
+        reportSignals();
         break;
       case "more": {
         // 접힌 상태에서 누르면 **펼친 채로 고정**한다 (마우스를 떼도 안 접힌다).

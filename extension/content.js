@@ -287,6 +287,61 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
  * x=1758(오른쪽 화면 밖)이다. 화면 밖 것을 걸러내고 보이는 둘을 합치면
  * x 42..1716, 폭 1674 — 펼침면 하나가 정확히 나온다.
  */
+// ---------------------------------------------------------------------------
+// 뷰어 종류 재기 (진단)
+//
+// 가로로 넘기는 뷰어와 세로로 내리는 페이지는 읽는 단위가 달라야 한다. 어느 쪽인지
+// **짐작하지 말고 재서** 정하려고, 먼저 값만 찍어 본다. 아직 동작은 바꾸지 않는다.
+//
+// 판정 경계는 여러 사이트에서 이 값을 모은 뒤에 정한다 (DEVLOG.md).
+// ---------------------------------------------------------------------------
+
+//: 만화 이미지로 볼 최소 크기. `probeViewer` 의 후보 기준과 같다.
+const SIGNAL_MIN_PX = 200;
+
+function viewerSignals() {
+  const vw = innerWidth;
+  const vh = innerHeight;
+  const scrollRatio = document.documentElement.scrollHeight / Math.max(1, vh);
+
+  // 화면 밖에 있어도 센다 — 세로 스크롤은 대부분이 화면 밖이다.
+  const imgs = [];
+  for (const el of document.querySelectorAll("img")) {
+    const r = el.getBoundingClientRect();
+    if (r.width >= SIGNAL_MIN_PX && r.height >= SIGNAL_MIN_PX) {
+      imgs.push({ top: r.top + scrollY, bottom: r.bottom + scrollY, left: r.left, width: r.width });
+    }
+  }
+  imgs.sort((a, b) => a.top - b.top);
+
+  // **세로로 이어졌는가.** 앞 것의 아래와 다음 것의 위가 가까우면(간격이 화면 높이보다
+  // 작으면) 이어진 것으로 본다. 가로 넘김 뷰어는 앞뒤 장이 같은 y 에 겹쳐 있다.
+  let stacked = 0;
+  for (let i = 1; i < imgs.length; i++) {
+    const gap = imgs[i].top - imgs[i - 1].bottom;
+    if (gap > -8 && gap < vh) stacked += 1;
+  }
+
+  return {
+    scrollRatio: Math.round(scrollRatio * 10) / 10,
+    imgs: imgs.length,
+    stacked,
+    canvases: document.querySelectorAll("canvas").length,
+    // 넓은 이미지 하나가 화면을 채우는 형태인가 (가로 뷰어의 흔한 모습)
+    wide: imgs.filter((r) => r.width > vw * 0.6).length,
+  };
+}
+
+/** 상태줄에 한 줄로. 판정은 아직 하지 않는다 — 숫자만 본다. */
+function reportSignals() {
+  const s = viewerSignals();
+  status(
+    `스크롤 ${s.scrollRatio}배 · 이미지 ${s.imgs}장(세로 ${s.stacked}) · ` +
+      `넓은 것 ${s.wide} · canvas ${s.canvases}`
+  );
+  return s;
+}
+
 function probeViewer() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
