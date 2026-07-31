@@ -45,6 +45,10 @@ def client(tmp_path, monkeypatch):
     # 켜 두면 여기 요청이 전부 401 이 되어, 라우팅 테스트가 인증 테스트로 변한다.
     # (실제로 그렇게 깨졌다.) 인증은 아래 전용 테스트에서 따로 본다.
     monkeypatch.setattr(app_module.cfg.server, "auth_disabled", True)
+    # **계측도 임시 폴더로 돌린다.** 안 그러면 테스트가 실서비스의
+    # `logs/metrics.jsonl` 에 섞여 들어간다 — 실제로 그 줄들을 실사용 기록으로
+    # 착각해 분석한 적이 있다 (region 1, 631바이트짜리가 그것이다).
+    monkeypatch.setattr(app_module.cfg.metrics, "jsonl_path", tmp_path / "metrics.jsonl")
     # **`with` 를 쓰지 않는다.** 컨텍스트 매니저로 쓰면 lifespan 이 돌아 GPU 예열이
     # 시작되고(모델 로드 수 초), 종료 시 모듈 전역 `_gpu` 가 닫혀서 다음 테스트가
     # "cannot schedule new futures after shutdown" 으로 죽는다. 라우팅만 볼 것이므로
