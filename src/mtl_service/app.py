@@ -438,6 +438,12 @@ async def _read_events(
             upload_bytes=upload_bytes,
             cached=hit is not None,
             translated=len(collected),
+            # **왜 캐시를 안 썼는지 남긴다.** 같은 화면·같은 크기인데 `cached=false`
+            # 가 찍히는 일이 있었는데, 그 원인이 요청 쪽 플래그인지 조회 실패인지
+            # 로그만으로는 갈라지지 않았다.
+            no_cache=parsed.no_cache,
+            refresh=parsed.refresh,
+            has_viewer=parsed.viewer is not None,
             **(
                 {
                     "tokens_in": usage["in"],
