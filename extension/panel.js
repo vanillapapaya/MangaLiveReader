@@ -277,10 +277,14 @@ function bindPanel(root) {
       case "drop":
         send({ type: "purge-page" });
         break;
-      case "signals":
-        // 값만 찍는다. 동작은 바꾸지 않는다 (content.js 의 `reportSignals`).
-        reportSignals();
+      case "signals": {
+        // **상태줄이 꺼져 있어도 보이게 한다.** 진단인데 안 보이면 소용이 없다.
+        root.classList.remove("mlr-hide-status");
+        const s = reportSignals();
+        // 서비스 로그에도 남긴다 — 사이트를 옮겨 다니며 눌러도 알아서 쌓인다.
+        send({ type: "signals", data: s });
         break;
+      }
       case "more": {
         // 접힌 상태에서 누르면 **펼친 채로 고정**한다 (마우스를 떼도 안 접힌다).
         // 나머지 기능을 쓰려면 손이 패널을 벗어나야 하는 경우가 있다.

@@ -211,6 +211,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   else if (msg?.type === "do-read") run(tab, null, null, { refresh: Boolean(msg.refresh) });
   else if (msg?.type === "set-auto") setAuto(tab, msg.on, msg.silent);
   else if (msg?.type === "purge-all") purgeCache(tab, { all: true });
+  else if (msg?.type === "signals") {
+    // 뷰어 신호를 서비스 로그로 보낸다. 실패해도 조용히 넘어간다 — 진단일 뿐이다.
+    settings().then(({ serviceUrl, authToken }) =>
+      fetch(serviceUrl.replace(/\/read\/?$/, "/signals"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken ? { "X-Auth-Token": authToken } : {}),
+        },
+        body: JSON.stringify({ ...msg.data, url: tab.url, title: tab.title }),
+      }).catch(() => {})
+    );
+  }
   else if (msg?.type === "purge-page") purgePage(tab);
   else if (msg?.type === "tts") {
     // 콘텐츠 스크립트가 기다리므로 반드시 답해야 한다 (실패해도 null 로).
