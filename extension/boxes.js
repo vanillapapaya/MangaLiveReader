@@ -522,7 +522,12 @@ document.addEventListener(
   (e) => {
     const label = e.target?.closest?.(".mlr-label");
     // 왼쪽 버튼 + 라벨 위에서만. 크기 조정 손잡이와 겹치지 않게 그 상태는 뺀다.
-    if (!label || e.button !== 0 || label.closest(".mlr-resizing")) return;
+    //
+    // **`Alt` 를 누르고 있으면 잡지 않는다.** 여기서 preventDefault 를 하는 통에
+    // 라벨의 글자를 긁을 수가 없다. 단어 하나를 사전에 넣어 보고 싶을 때가 있어서
+    // 빠져나갈 구멍을 하나 둔다 — 새 UI 를 더하는 대신 브라우저 기본 동작을
+    // 되살리는 쪽이다. 긁고 나면 복사든 검색이든 브라우저 우클릭이 알아서 한다.
+    if (!label || e.button !== 0 || e.altKey || label.closest(".mlr-resizing")) return;
     e.preventDefault();
     e.stopPropagation();
     const cur = readShift(label);
