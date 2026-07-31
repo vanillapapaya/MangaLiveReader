@@ -511,6 +511,16 @@ document.addEventListener("pointerout", (e) => {
   if (e.target?.closest?.(".mlr-label") && !dragLabel) hideLeader();
 }, true);
 
+// `Alt` 를 누르고 있는 동안만 커서를 바꾼다. CSS 는 수식어 키를 볼 수 없어서
+// 클래스로 전달한다. **창이 포커스를 잃으면 반드시 지운다** — 다른 창으로 갔다
+// 오면 keyup 이 안 와서 눌린 상태로 굳는다.
+function setAltMode(on) {
+  document.getElementById(OVERLAY_ID)?.classList.toggle("mlr-alt", on);
+}
+addEventListener("keydown", (e) => e.key === "Alt" && setAltMode(true), true);
+addEventListener("keyup", (e) => e.key === "Alt" && setAltMode(false), true);
+addEventListener("blur", () => setAltMode(false), true);
+
 let dragLabel = null;
 
 //: 이만큼은 움직여야 "옮겼다" 로 본다. 그냥 누른 것까지 고정하면, 라벨을 클릭할
