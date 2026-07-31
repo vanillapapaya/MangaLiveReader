@@ -289,15 +289,37 @@ const watching = new Map();
 // 상태에 맞다.
 const KEY = (tabId) => `mlr-watch-${tabId}`;
 
+//: 같은 탭을 동시에 읽어 오는 것을 묶는다. 아래 참조.
+const loadingState = new Map();
+
 async function loadState(tabId) {
   let st = watching.get(tabId);
   if (st) return st;
-  const got = await chrome.storage.session.get(KEY(tabId));
-  const saved = got[KEY(tabId)];
-  if (!saved) return null;
-  st = { ...saved, timer: null, busy: false };
-  watching.set(tabId, st);
-  return st;
+  // **동시에 부르면 상태 객체가 둘이 된다.**
+  //
+  // 워커가 막 살아난 직후에는 `watching` 이 비어 있어 둘 다 저장소를 읽으러 간다.
+  // 그러면 각자 자기 객체를 만들어 `watching` 에 넣는데, `schedule()` 의
+  // `clearTimeout(st.timer)` 가 **남의 타이머를 못 지운다** — 확인이 두 번 돌고
+  // 같은 페이지를 같은 초에 두 번 읽는다 (실측 로그에 그 쌍이 있다).
+  //
+  // 진행 중인 읽기를 하나로 묶어 같은 객체를 돌려준다.
+  let pending = loadingState.get(tabId);
+  if (!pending) {
+    pending = (async () => {
+      const got = await chrome.storage.session.get(KEY(tabId));
+      const saved = got[KEY(tabId)];
+      if (!saved) return null;
+      const made = watching.get(tabId) ?? { ...saved, timer: null, busy: false };
+      watching.set(tabId, made);
+      return made;
+    })();
+    loadingState.set(tabId, pending);
+  }
+  try {
+    return await pending;
+  } finally {
+    loadingState.delete(tabId);
+  }
 }
 
 function saveState(tabId, st) {

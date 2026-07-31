@@ -415,7 +415,26 @@ function inClip(p, c) {
   return mx >= c.x && mx <= c.x + c.width && my >= c.y && my <= c.y + c.height;
 }
 
+/** 지금 화면에 있는 번역을 원문 기준으로 챙겨 둔다.
+ *
+ * 다시 읽으면 박스를 새로 그리는데, 그 읽기가 중간에 끊기면(같은 페이지를 연달아
+ * 읽을 때 앞의 것이 취소된다) **원문만 남고 번역이 사라진다.** 갱신을 누르기 전에는
+ * 돌아오지 않는다 — 실제로 그 증상이 났다.
+ *
+ * 원문이 같으면 같은 말풍선이다. 그 번역을 그대로 물려준다. 새 번역이 도착하면
+ * `fillTranslation` 이 덮어쓰므로 낡은 것이 남지도 않는다.
+ */
+function carryOverTranslations() {
+  const got = new Map();
+  for (const box of document.querySelectorAll(".mlr-box.mlr-translated")) {
+    const ja = box.dataset.ja || "";
+    if (ja && box.dataset.ko) got.set(ja, { ko: box.dataset.ko, kind: box.dataset.kind });
+  }
+  return got;
+}
+
 function drawBoxes(regions) {
+  const carried = carryOverTranslations();
   const boxes = overlay().querySelector("#mlr-boxes");
   // 전체 읽기는 `begin` 에서 이미 비웠다. 여기서 또 비우면 영역 하나만 다시
   // 읽을 때 나머지 박스가 통째로 사라진다.
@@ -455,6 +474,14 @@ function drawBoxes(regions) {
     // 부분 읽기로 생긴 박스만 저장 대상이다 (전체 읽기 결과는 캐시가 들고 있다).
     if (ctx.partial) div.dataset.manual = "1";
     div.innerHTML = `<span class="mlr-label">${escapeHtml(r.text)}</span>`;
+    // 같은 원문이 방금 전 화면에 번역돼 있었으면 그것을 물려받는다 (위 주석 참조).
+    const before = carried.get(r.text ?? "");
+    if (before) {
+      div.dataset.ko = before.ko;
+      div.dataset.kind = before.kind || "dialogue";
+      div.classList.add("mlr-translated");
+      div.querySelector(".mlr-label").textContent = before.ko;
+    }
     // 라벨이 아래 말풍선을 가리지 않게, 박스가 화면 아래쪽이면 위로 붙인다
     boxes.appendChild(div);
     drawn += 1;
