@@ -23,6 +23,13 @@ let removedMarks = [];
 /** 마지막 probe 에서 본 뷰어 요소들. 박스가 스크롤을 따라가는 데 쓴다. */
 let viewerEls = [];
 
+/** 이미지 경로에서 박스를 매어 둔 요소. `키(=이미지 주소) → 요소`.
+ *
+ * 요소를 직접 들고 있지 않고 **주소를 키로 쓴다.** 사이트가 뷰어를 다시 그리면
+ * 요소는 갈리지만 주소는 그대로라, 갈린 뒤에도 같은 이미지를 다시 찾을 수 있다.
+ * 이 맵은 그 찾기를 아낄 뿐이고 없어도 동작한다. */
+const anchorCache = new Map();
+
 //: 페이지를 옮겨도 남는 토글. `저장소 키 → 오버레이 클래스`.
 //: **쓰는 곳보다 위에 둔다** — `const` 는 초기화 전에 못 읽는다(TDZ).
 const STICKY_TOGGLES = {
@@ -130,6 +137,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ error: String(err?.stack || err) });
       }
       return true;
+    case "images":
+      // 세로 스크롤이면 캡처하지 않고 **이미지 한 장씩** 읽는다. 어느 쪽인지와
+      // 지금 화면에 걸친 이미지 목록을 함께 준다 — background 가 그것으로 가른다.
+      try {
+        sendResponse({ vertical: isVerticalReader(), images: visibleImages() });
+      } catch (err) {
+        sendResponse({ error: String(err?.stack || err) });
+      }
+      return true;
+    case "fetch-image":
+      // **두 번째 시도다.** background 가 확장 문맥에서 먼저 받아 보고, 그쪽이
+      // 막히면 여기로 온다. 여기서는 쿠키·리퍼러가 페이지 것으로 붙어서 핫링크
+      // 차단을 통과하는 경우가 있다. 대신 CORS 는 페이지 출처로 걸린다 —
+      // 두 문맥이 막히는 이유가 서로 달라서 둘 다 해 보는 값이 있다.
+      fetch(msg.src, { credentials: "include" })
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then(blobToDataUrl)
+        .then((dataUrl) => sendResponse({ dataUrl }))
+        .catch((err) => sendResponse({ error: String(err?.message || err) }));
+      return true;
     case "hide-overlay":
       overlay().style.visibility = "hidden";
       // **그려질 때까지 기다렸다가 응답한다.** 스타일만 바꾸고 바로 답하면 브라우저가
@@ -165,6 +192,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // 새 그림 위에 이전 페이지의 번역이 얹혀 있는 것이 가장 거슬린다.
       markStale();
       break;
+    case "unstale":
+      // 이미지 경로는 화면이 바뀌어도 **옛 박스가 그대로 맞다** — 박스가 화면이
+      // 아니라 제 이미지에 매여 있기 때문이다. 흐리게 해 둔 것을 되돌린다.
+      // (이게 없으면 스크롤만 하고 읽을 것이 없을 때 화면이 흐린 채로 남는다.)
+      overlay().querySelector("#mlr-boxes")?.classList.remove("mlr-stale");
+      break;
     case "auto-state":
       autoOn = msg.on;
       syncPanel();
@@ -182,11 +215,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         prefix: msg.prefix || "",
         clip: msg.clip || null,
         partial: Boolean(msg.partial),
+        // 이미지 경로. 이 읽기의 좌표 기준은 **그 이미지 요소**이고, 서비스 bbox 는
+        // 보낸 이미지(=그 이미지 전체) 안의 픽셀이다. 배율·dpr 이 끼지 않는다.
+        anchor: msg.anchor || null,
+        imgSize: msg.imgSize || null,
       };
       // **전체 읽기일 때만 기존 박스를 지운다.** 영역을 새로 지정한 것은 "여기도
       // 읽어줘" 지 "나머지는 버려" 가 아니다. 예전에는 `merge` 유무로 갈랐는데
       // 드래그 선택에는 merge 가 없어서 기존 번역이 통째로 사라졌다.
-      if (msg.partial) {
+      if (msg.anchor) {
+        // **이 이미지의 박스만 지운다.** 세로 스크롤은 화면에 여러 장이 걸치고
+        // 위아래 이미지의 박스는 각자 제 요소를 따라다니므로 여전히 맞다.
+        // 통째로 지우면 방금 읽은 위 장의 번역이 사라진다.
+        for (const b of document.querySelectorAll(
+          `.mlr-box[data-anchor="${cssEscape(msg.anchor)}"]`
+        )) {
+          b.remove();
+        }
+        overlay().querySelector("#mlr-boxes")?.classList.remove("mlr-stale");
+        // 손으로 더한 박스 저장은 뷰어 사각형 기준이라 이 경로에서는 쓰지 않는다.
+        pageKey = null;
+      } else if (msg.partial) {
         // **바로 지우지 않는다.** 다시 읽어서 아무것도 안 나오면(그 영역에 글자가
         // 없거나 검출이 실패하면) 원래 박스마저 사라져 손해만 본다. 결과가 도착한
         // 뒤에 지운다.
@@ -288,21 +337,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
  * x 42..1716, 폭 1674 — 펼침면 하나가 정확히 나온다.
  */
 // ---------------------------------------------------------------------------
-// 뷰어 종류 재기 (진단)
+// 뷰어 종류 재기
 //
 // 가로로 넘기는 뷰어와 세로로 내리는 페이지는 읽는 단위가 달라야 한다. 어느 쪽인지
-// **짐작하지 말고 재서** 정하려고, 먼저 값만 찍어 본다. 아직 동작은 바꾸지 않는다.
+// **짐작하지 말고 잰다** — `isVerticalReader` 가 이미지 경로와 캡처 경로를 가른다.
 //
-// 판정 경계는 여러 사이트에서 이 값을 모은 뒤에 정한다 (DEVLOG.md).
+// 경계는 네 사이트에서 값을 모아 정했다 (아래 표, DEVLOG.md). 값을 모으던 진단
+// 버튼(`⋯ → 진단`)은 경계가 정해진 뒤 걷어냈다 — 남은 것은 판정이 실제로 쓰는
+// 두 값뿐이다.
 // ---------------------------------------------------------------------------
 
 //: 만화 이미지로 볼 최소 크기. `probeViewer` 의 후보 기준과 같다.
 const SIGNAL_MIN_PX = 200;
 
+//: 화면 폭의 이만큼을 차지해야 만화로 본다. yanmaga 의 이미지 27~51장이 전부
+//: 이 조건에서 걸러졌다 (섬네일·UI). 판정과 수집이 **같은 규칙**을 써야 한다 —
+//: "세로 스크롤이다" 라고 판정해 놓고 수집이 다른 것을 집으면 엉뚱한 것을 읽는다.
+const WIDE_MIN_RATIO = 0.6;
+
 function viewerSignals() {
   const vw = innerWidth;
   const vh = innerHeight;
-  const scrollRatio = document.documentElement.scrollHeight / Math.max(1, vh);
 
   // 화면 밖에 있어도 센다 — 세로 스크롤은 대부분이 화면 밖이다.
   const imgs = [];
@@ -323,12 +378,9 @@ function viewerSignals() {
   }
 
   return {
-    scrollRatio: Math.round(scrollRatio * 10) / 10,
-    imgs: imgs.length,
     stacked,
-    canvases: document.querySelectorAll("canvas").length,
     // 넓은 이미지 하나가 화면을 채우는 형태인가 (가로 뷰어의 흔한 모습)
-    wide: imgs.filter((r) => r.width > vw * 0.6).length,
+    wide: imgs.filter((r) => r.width > vw * WIDE_MIN_RATIO).length,
   };
 }
 
@@ -353,15 +405,116 @@ function isVerticalReader(s = viewerSignals()) {
   return s.stacked >= 3 && s.wide >= 3;
 }
 
-/** 상태줄에 한 줄로. 판정은 아직 하지 않는다 — 숫자만 본다. */
-function reportSignals() {
-  const s = viewerSignals();
-  status(
-    `스크롤 ${s.scrollRatio}배 · 이미지 ${s.imgs}장(세로 ${s.stacked}) · ` +
-      `넓은 것 ${s.wide} · canvas ${s.canvases} → ` +
-      (isVerticalReader(s) ? "세로 스크롤" : "가로 넘김")
-  );
-  return s;
+// ---------------------------------------------------------------------------
+// 이미지 경로 — 화면에 걸친 이미지를 한 장씩 읽는다
+//
+// 캡처 경로는 **화면에 보이는 만큼**을 잘라 보낸다. 세로 스크롤에서는 그 범위가
+// 스크롤할 때마다 달라져서, 같은 회차를 오르내리면 같은 그림이 매번 다른 잘림으로
+// 나가고 해시도 좌표도 흔들린다 (v0.2.1~0.2.3 에서 고친 문제들의 뿌리다).
+//
+// 이미지 단위로 읽으면 그 흔들림이 **구조적으로** 없어진다:
+//
+//   좌표 기준  잘린 뷰포트 → 그 이미지 안 비율 (스크롤·확대·창 크기 무관)
+//   캐시 키    지각 해시(퍼지) → 이미지 주소 해시 (같은 이미지면 반드시 적중)
+//   해상도     화면 배율 → 원본
+//   오버레이   캡처에 찍힘 → 안 찍힘 (숨겼다 되살릴 일이 없다)
+//
+// 대신 **이미지 바이트를 손에 넣어야** 한다. 막히면(CORS·핫링크 차단) 조용히
+// 캡처 경로로 내려간다 — background 의 `imageBlob` 참조.
+// ---------------------------------------------------------------------------
+
+//: 화면에 이만큼(CSS px) 넘게 걸쳐야 "지금 보는 이미지" 로 친다.
+//:
+//: 스크롤하면 앞 장의 끝자락이 늘 몇 px 남는다. 그것까지 읽으면 한 화면을 볼 때마다
+//: 요청이 두 배가 된다. 반대로 너무 크게 잡으면 화면에 막 들어온 다음 장을 안 읽어
+//: 읽다가 끊긴다. 한 줄 대사 높이쯤인 80px 로 둔다.
+const VISIBLE_MIN_PX = 80;
+
+//: 이 길이를 넘는 주소는 키로 쓰지 않는다 (`data:` 로 박아 넣은 이미지).
+//: 키는 박스의 `data-anchor` 속성으로 들어가므로 무한정 길면 곤란하다.
+const ANCHOR_KEY_MAX = 512;
+
+/** 지금 화면에 걸친 만화 이미지. 읽는 순서(위 → 아래)로 준다.
+ *
+ * `probeViewer()` 와 달리 **하나를 고르지 않는다.** 세로 스크롤에서는 화면에 보통
+ * 한두 장이 걸치는데, 걸친 것을 전부 읽어야 한다 — 반쪽만 번역돼 있으면 읽다가
+ * 끊긴다.
+ *
+ * `done` 은 이미 박스가 붙어 있는 이미지다. background 가 그것을 건너뛴다 —
+ * 캐시에서 나온다 해도 왕복은 왕복이다.
+ */
+function visibleImages() {
+  const vw = innerWidth;
+  const vh = innerHeight;
+  const out = [];
+  for (const el of document.images) {
+    // 아직 안 실린 것은 보낼 바이트도, 원본 크기도 없다.
+    if (!el.naturalWidth || !el.naturalHeight) continue;
+    const key = el.currentSrc || el.src || "";
+    if (!key || key.length > ANCHOR_KEY_MAX) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < SIGNAL_MIN_PX || r.height < SIGNAL_MIN_PX) continue;
+    if (r.width < vw * WIDE_MIN_RATIO) continue;
+    const seen = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+    // 이미지가 화면보다 작으면 그 높이만큼만 걸칠 수 있다.
+    if (seen < Math.min(VISIBLE_MIN_PX, r.height)) continue;
+    anchorCache.set(key, el);
+    out.push({
+      key,
+      src: key,
+      w: el.naturalWidth,
+      h: el.naturalHeight,
+      top: r.top,
+      done: Boolean(document.querySelector(`.mlr-box[data-anchor="${cssEscape(key)}"]`)),
+    });
+  }
+  out.sort((a, b) => a.top - b.top);
+  return out;
+}
+
+/** 키(=이미지 주소)에 해당하는 요소. 없으면 null.
+ *
+ * **요소 참조를 그대로 믿지 않는다.** 사이트가 뷰어를 다시 그리면 같은 그림이라도
+ * 요소가 갈린다 (전체화면 전환에서 실제로 그렇다). 주소로 다시 찾으면 그때도 맞는다.
+ */
+function anchorEl(key) {
+  const hit = anchorCache.get(key);
+  if (hit?.isConnected) return hit;
+  for (const el of document.images) {
+    if ((el.currentSrc || el.src) === key) {
+      anchorCache.set(key, el);
+      return el;
+    }
+  }
+  anchorCache.delete(key);
+  return null;
+}
+
+/** 그 이미지가 지금 화면에서 차지하는 사각형 (뷰포트 CSS 좌표). */
+function anchorRect(key) {
+  const el = anchorEl(key);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0
+    ? { x: r.left, y: r.top, width: r.width, height: r.height }
+    : null;
+}
+
+/** 속성 선택자에 넣을 수 있게 따옴표·역슬래시를 막는다.
+ *
+ * 이미지 주소가 그대로 선택자에 들어간다. `CSS.escape` 는 식별자용이라 값에는
+ * 과하고, 여기서 위험한 문자는 둘뿐이다. */
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error || new Error("읽기 실패"));
+    fr.readAsDataURL(blob);
+  });
 }
 
 function probeViewer() {

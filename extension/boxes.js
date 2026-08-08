@@ -84,8 +84,9 @@ function startResize(box) {
       box.style.left !== orig.left || box.style.top !== orig.top ||
       box.style.width !== orig.width || box.style.height !== orig.height;
     // 손으로 옮겼으면 비율도 다시 잡아야 한다. 안 그러면 다음 스크롤에서
-    // 옛 비율로 되돌아간다.
-    const vr = viewerRect();
+    // 옛 비율로 되돌아간다. **그 박스의 기준**으로 잡는다 — 이미지 경로 박스를
+    // 뷰어 기준으로 다시 재면 스크롤하는 순간 엉뚱한 데로 날아간다.
+    const vr = boxBase(box);
     if (changed && vr) box.dataset.n = JSON.stringify(toNorm(box, vr));
     cancelResize();
     if (changed) reread(box);
@@ -175,6 +176,11 @@ function viewerRect() {
   const w = u.right - u.left;
   const h = u.bottom - u.top;
   return w > 0 && h > 0 ? { x: u.left, y: u.top, width: w, height: h } : null;
+}
+
+/** 이 박스의 좌표 기준 사각형. 이미지 경로면 그 이미지, 아니면 뷰어. */
+function boxBase(box) {
+  return box.dataset.anchor ? anchorRect(box.dataset.anchor) : viewerRect();
 }
 
 /** 화면 좌표 → 뷰어 사각형 기준 비율. */
@@ -344,21 +350,44 @@ function relayoutBoxes() {
   const boxes = root?.querySelector("#mlr-boxes");
   if (!boxes || !boxes.children.length) return;
 
+  // 이미지 경로의 박스는 제 이미지에 매여 있다. 그것만 있으면 뷰어를 다시 찾을
+  // 필요가 없다 — 캡처 경로 박스가 하나라도 있을 때만 찾는다.
+  const anyViewerBox = [...boxes.children].some((el) => el.dataset.n && !el.dataset.anchor);
+
   // 뷰어가 다시 그려져 기억한 요소가 사라졌으면 새로 찾는다 (전체화면 전환 때
   // SpeedBinb 는 타일을 새로 만든다).
-  if (!viewerEls.some((el) => el.isConnected)) {
+  if (anyViewerBox && !viewerEls.some((el) => el.isConnected)) {
+    // 실패해도 이미지 경로 박스는 계속 놓아야 한다 — 그쪽은 뷰어와 무관하다.
     try {
       probeViewer();
-    } catch {
-      return;
-    }
+    } catch {}
   }
-  const v = viewerRect();
-  if (!v) return;
+  const v = anyViewerBox ? viewerRect() : null;
+
+  // 같은 이미지에 매인 박스가 여럿이다. 사각형은 이미지마다 한 번만 잰다.
+  const rects = new Map();
 
   for (const el of boxes.children) {
     if (!el.dataset.n) continue;
-    const p = fromNorm(JSON.parse(el.dataset.n), v);
+    let base;
+    if (el.dataset.anchor) {
+      const key = el.dataset.anchor;
+      if (!rects.has(key)) rects.set(key, anchorRect(key));
+      base = rects.get(key);
+      // **매인 이미지가 사라졌으면 감춘다.** 지우지는 않는다 — 사이트가 뷰어를
+      // 다시 그리는 중이면 곧 돌아오고, 그때 제자리에 다시 뜬다. 그냥 두면 다음
+      // 회차 그림 위에 지난 회차의 번역이 떠 있게 된다 (SPA 라 페이지가 안 새로 뜬다).
+      if (!base) {
+        el.hidden = true;
+        continue;
+      }
+    } else {
+      // 캡처 경로 — 뷰어를 못 재면 손대지 않는다 (옛 동작 그대로).
+      base = v;
+      if (!base) continue;
+    }
+    el.hidden = false;
+    const p = fromNorm(JSON.parse(el.dataset.n), base);
     el.style.left = `${p.left}px`;
     el.style.top = `${p.top}px`;
     el.style.width = `${p.width}px`;

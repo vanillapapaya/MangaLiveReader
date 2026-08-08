@@ -211,19 +211,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   else if (msg?.type === "do-read") run(tab, null, null, { refresh: Boolean(msg.refresh) });
   else if (msg?.type === "set-auto") setAuto(tab, msg.on, msg.silent);
   else if (msg?.type === "purge-all") purgeCache(tab, { all: true });
-  else if (msg?.type === "signals") {
-    // 뷰어 신호를 서비스 로그로 보낸다. 실패해도 조용히 넘어간다 — 진단일 뿐이다.
-    settings().then(({ serviceUrl, authToken }) =>
-      fetch(serviceUrl.replace(/\/read\/?$/, "/signals"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(authToken ? { "X-Auth-Token": authToken } : {}),
-        },
-        body: JSON.stringify({ ...msg.data, url: tab.url, title: tab.title }),
-      }).catch(() => {})
-    );
-  }
   else if (msg?.type === "purge-page") purgePage(tab);
   else if (msg?.type === "tts") {
     // 콘텐츠 스크립트가 기다리므로 반드시 답해야 한다 (실패해도 null 로).
@@ -566,7 +553,8 @@ async function purgeCache(tab, body) {
  * 읽고 싶지는 않을 때가 있다 — 번역 비용이 드니까. 지워만 두면 다음에 그 페이지를
  * 열 때 새로 읽는다.
  *
- * 캐시 키는 화면 픽셀의 해시라 **지금 화면을 한 번 찍어야** 무엇을 지울지 안다.
+ * 캡처 경로의 캐시 키는 화면 픽셀의 해시라 **지금 화면을 한 번 찍어야** 무엇을
+ * 지울지 안다. 이미지 경로는 찍을 필요가 없다 — 주소가 곧 키다.
  *
  * **여기서는 오버레이를 숨긴다** (자동 감지의 확인과 다르다). 캐시 키는 읽을 때
  * 오버레이 없이 찍은 해시라, 켠 채로 찍으면 키가 달라져 정작 그 페이지를 못 지운다.
@@ -574,6 +562,27 @@ async function purgeCache(tab, body) {
  */
 async function purgePage(tab) {
   try {
+    // **세로 스크롤이면 지울 키가 다르다.** 이 경로의 키는 이미지 주소 해시라,
+    // 화면을 찍어 만든 해시로 지우면 아무것도 안 지워진다 (그러고도 "지웠다" 고
+    // 말하니 더 나쁘다). 화면에 걸친 이미지들의 것을 지운다.
+    const view = await chrome.tabs.sendMessage(tab.id, { type: "images" }).catch(() => null);
+    if (view?.vertical && view.images?.length) {
+      const profile = hostToProfile(tab.url);
+      let deleted = 0;
+      for (const img of view.images) {
+        const n = await purgeCache(tab, { phash: await sha256Hex(img.src), profile });
+        if (n === null) return; // 실패는 purgeCache 가 이미 알렸다
+        deleted += n;
+      }
+      tell(
+        tab,
+        deleted
+          ? `화면의 이미지 캐시를 지웠다 (${deleted}개) — 「갱신」으로 다시 읽는다`
+          : "화면의 이미지는 캐시에 없다"
+      );
+      return;
+    }
+
     const { phash } = await prepare(tab, null, true);
     await chrome.tabs.sendMessage(tab.id, { type: "show-overlay" }).catch(() => {});
     const deleted = await purgeCache(tab, { phash, profile: hostToProfile(tab.url) });
@@ -640,6 +649,159 @@ async function prepare(tab, override = null, stable = false, keepOverlay = false
   return { probe, blob, scale, phash: bitsToHex(ahash), ahash };
 }
 
+// ---------------------------------------------------------------------------
+// 이미지 경로 (세로 스크롤)
+//
+// 캡처하지 않고 `<img>` **원본 바이트**를 보낸다. 서비스는 그대로다 — `/read` 는
+// 원래 이미지 한 장을 받는다.
+//
+// 얻는 것:
+//   · 좌표가 이미지 안 비율이라 스크롤·확대·창 크기와 무관하다
+//   · 캐시 키가 주소 해시라 흔들리지 않는다 (같은 이미지면 반드시 적중)
+//   · 원본 해상도 그대로라 OCR 에 유리하고, 오버레이를 숨겼다 되살릴 일이 없다
+//
+// 대신 바이트를 못 얻으면(CORS·핫링크 차단) 아무것도 못 한다. 그때는 조용히 캡처
+// 경로로 내려간다 — 되는 사이트가 늘어날 뿐, 되던 사이트가 나빠지지 않는다.
+// ---------------------------------------------------------------------------
+
+/** 이미지 원본 바이트. 두 문맥을 차례로 해 본다 — **막히는 이유가 서로 다르다.**
+ *
+ *   확장 문맥  host 권한이 있으면 CORS 를 넘는다. 리퍼러·쿠키는 안 붙어서
+ *              핫링크 차단이 걸린 CDN 은 403 을 준다
+ *   페이지 문맥 쿠키·리퍼러가 페이지 것으로 붙는다. 대신 CORS 가 페이지 출처로
+ *              걸리고, 사이트 CSP(`connect-src`)에 막힐 수도 있다
+ *
+ * 둘 다 막히면 던진다. 호출자가 캡처 경로로 내려간다.
+ */
+async function imageBlob(tab, src) {
+  const why = [];
+  try {
+    const resp = await fetch(src, { credentials: "include" });
+    if (resp.ok) return await resp.blob();
+    why.push(`확장 HTTP ${resp.status}`);
+  } catch (err) {
+    why.push(`확장 ${err.message}`);
+  }
+  try {
+    const r = await chrome.tabs.sendMessage(tab.id, { type: "fetch-image", src });
+    if (r?.dataUrl) return await (await fetch(r.dataUrl)).blob();
+    why.push(`페이지 ${r?.error || "응답 없음"}`);
+  } catch (err) {
+    why.push(`페이지 ${err.message}`);
+  }
+  throw new Error(why.join(" · "));
+}
+
+/** 캐시 키. **주소를 그대로 해시한다.**
+ *
+ * 캡처 경로는 화면 픽셀의 지각 해시를 쓴다 — 잘리는 범위가 스크롤마다 달라지니
+ * 퍼지 매칭이 필요했다. 이미지는 그럴 일이 없다. 같은 이미지면 주소가 같고, 주소가
+ * 같으면 해시가 같다.
+ *
+ * **질의 문자열까지 넣는다.** 서명이 붙는 주소라면 그때마다 캐시가 빗나가 돈이
+ * 나가지만, 질의를 떼면 `?page=3` 같은 주소에서 **다른 페이지가 같은 키가 된다** —
+ * 남의 번역이 뜬다. 빗나가는 쪽이 덜 나쁘다. 실제로 빗나가면
+ * `logs/metrics.jsonl` 의 캐시 적중률로 드러난다.
+ *
+ * 길이가 SHA-256 = 64자로 캡처 해시(256비트 → 64자)와 같아서 서버의 `hamming()`
+ * 이 그대로 돈다. 무작위 비트라 캡처 해시와의 거리는 늘 100 안팎 — 퍼지 매칭
+ * (`fuzzy_hamming` 10)에 잘못 걸릴 일이 없다.
+ */
+async function sha256Hex(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** 화면에 걸친 이미지를 위에서부터 한 장씩 읽는다.
+ *
+ * 돌려주는 값은 **이 경로로 처리했는가**다. `false` 면 호출자가 캡처로 내려간다.
+ */
+async function runImages(tab, images, opts, say) {
+  // 자동 감지가 "바뀌었다" 며 흐리게 해 둔 것을 되돌린다. 이 경로에서는 화면이
+  // 바뀌어도 옛 박스가 여전히 제 이미지 위에 맞게 놓여 있다 — 안 되돌리면
+  // 스크롤만 하고 읽을 것이 없을 때 번역이 흐린 채로 남는다.
+  chrome.tabs.sendMessage(tab.id, { type: "unstale" }).catch(() => {});
+
+  // 이미 박스가 붙어 있는 이미지는 건너뛴다. 캐시에서 나온다 해도 왕복은 왕복이고,
+  // 다시 그리면 손으로 옮긴 라벨이 제자리로 돌아간다. 「갱신」은 예외다.
+  const todo = images.filter((im) => !im.done || opts.refresh);
+  if (!todo.length) {
+    say("status", { message: `화면의 이미지 ${images.length}장은 이미 읽었다` });
+    return true;
+  }
+
+  const s = await settings();
+  const { serviceUrl, authToken, model } = s;
+  const apiKey = keyFor(model, s);
+  const profile = hostToProfile(tab.url);
+
+  for (const [i, img] of todo.entries()) {
+    const label = `이미지 ${i + 1}/${todo.length}`;
+    let norm;
+    try {
+      norm = await normalizeImage(await imageBlob(tab, img.src));
+    } catch (err) {
+      // **첫 장부터 못 받으면 이 사이트는 이미지 경로가 안 되는 것이다.** 캡처로
+      // 내려간다. 뒤에서 실패한 것은 앞 장이 이미 나갔으니 되돌리지 않는다.
+      if (i === 0) {
+        say("status", { message: `이미지를 못 받았다 (${err.message})` });
+        return false;
+      }
+      say("error", { data: { message: `${label} 을 못 받았다: ${err.message}` } });
+      return true;
+    }
+    const phash = await sha256Hex(img.src);
+    say("status", {
+      message:
+        `${label} · 원본 ${norm.natural.join("×")} → ${norm.size.join("×")} · ` +
+        `${Math.round(norm.blob.size / 1024)}KB`,
+    });
+
+    const meta = {
+      phash,
+      profile,
+      mode: "natural",
+      // 바로 앞 장이 문맥이다. 세로 스크롤은 순서가 곧 읽는 순서라 이 연결이
+      // 캡처 경로보다 더 정확하다.
+      prev_page_phash: await getPrevPage(tab.id),
+      include_sfx: true,
+      model: model || null,
+      no_cache: false,
+      refresh: Boolean(opts.refresh),
+      // 잘라 보낸 것이 아니라 통째로 보냈다. 걸러낼 범위가 없다.
+      clip: null,
+      // **좌표의 기준은 이미지 전체다.** 캐시가 다른 크기로 저장돼 있어도
+      // (정규화 상수가 바뀌면 그렇다) 클라이언트가 이 값으로 비율을 되찾는다.
+      viewer: [0, 0, norm.size[0], norm.size[1]],
+    };
+    const form = new FormData();
+    form.append("image", norm.blob, "page.jpg");
+    form.append("meta", JSON.stringify(meta));
+
+    const resp = await postWithRetry(serviceUrl, form, authToken, say, apiKey);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${await resp.text()}`);
+    setPrevPage(tab.id, phash);
+
+    say("begin", {
+      // 이 읽기의 좌표 기준. 콘텐츠 스크립트가 이 키로 요소를 다시 찾는다.
+      anchor: img.key,
+      imgSize: norm.size,
+      // 캡처 경로의 값들은 쓰지 않는다 — 배율도 dpr 도 끼지 않는 좌표계다.
+      rect: null,
+      scale: 1,
+      dpr: 1,
+      partial: false,
+      pageKey: null,
+    });
+    for await (const [event, data] of readSSE(resp)) {
+      say(event, { data });
+    }
+  }
+  // 자동 감지의 기준 화면을 새로 찍는다 (캡처 경로와 같은 이유).
+  refreshBaseline(tab);
+  return true;
+}
+
 async function run(tab, override = null, prepared = null, opts = {}) {
   if (!tab?.id) return;
   const t0 = performance.now();
@@ -648,6 +810,22 @@ async function run(tab, override = null, prepared = null, opts = {}) {
       .catch(() => {}); // 콘텐츠 스크립트가 없는 페이지면 조용히 무시
 
   try {
+    // **세로 스크롤이면 이미지 단위로 읽는다.** 화면을 잘라 보내지 않으므로
+    // 스크롤 위치에 따라 결과가 흔들리지 않는다 (`runImages` 머리말).
+    //
+    // 손으로 고른 읽기(영역·다시 읽기)는 그대로 캡처로 간다 — 고른 사각형이 곧
+    // 요청이라 이미지 한 장으로 바꿔칠 수 없다. 캡처를 이미 들고 들어온 경로도
+    // 마찬가지다 (그것을 버리면 두 번 찍는 꼴이다).
+    //
+    // 자동 감지(`check`)는 여기로 들어온다. 판정은 여전히 화면 해시로 하고,
+    // 읽는 단위만 이미지가 된다. 읽기 버퍼(계획의 「자동」 절)는 아직 없다.
+    if (!override && !prepared) {
+      const view = await chrome.tabs.sendMessage(tab.id, { type: "images" }).catch(() => null);
+      if (view?.vertical && view.images?.length) {
+        if (await runImages(tab, view.images, opts, say)) return;
+        say("status", { message: "캡처로 읽는다" });
+      }
+    }
     const { probe, blob, scale, phash } = prepared ?? (await prepare(tab, override));
     // 한 줄로 합친다 — 캡처가 이미 끝난 상태로 들어오는 경로(자동 감지)에서는
     // 두 줄을 따로 보내면 첫 줄이 보이기도 전에 덮인다.
@@ -785,6 +963,44 @@ async function run(tab, override = null, prepared = null, opts = {}) {
   }
 }
 
+/** §5.4 규격에 맞추는 배율. 짧은 변을 1200-1600 안에 넣되 긴 변이 터지지 않게.
+ *
+ * 짧은 변만 보고 키우면 가늘고 긴 것에서 긴 변이 터진다. 말풍선 한 줄을
+ * 드래그하면(예: 1600×160) 짧은 변 기준 배율이 7.5 라 12000×1200 이 된다 —
+ * 업로드도 크고 검출기는 어차피 1024 로 줄여 본다.
+ *
+ * **캡처 경로와 이미지 경로가 같은 값을 써야 한다.** 캐시는 보낸 이미지 크기가
+ * 같은지 보므로(`cache.get` 의 `size`), 두 경로가 다른 배율을 내면 같은 그림도
+ * 캐시가 안 맞는다.
+ */
+function fitScale(sw, sh) {
+  const short = Math.min(sw, sh);
+  let scale = 1;
+  if (short > MAX_SHORT_SIDE) scale = MAX_SHORT_SIDE / short;
+  else if (short < MIN_SHORT_SIDE) scale = MIN_SHORT_SIDE / short;
+  const long = Math.max(sw, sh) * scale;
+  if (long > MAX_LONG_SIDE) scale *= MAX_LONG_SIDE / long;
+  return scale;
+}
+
+/** 이미지 원본 바이트 → §5.4 규격 JPEG. **자르지 않는다** — 한 장이 곧 한 페이지다. */
+async function normalizeImage(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const sw = bitmap.width;
+  const sh = bitmap.height;
+  const scale = fitScale(sw, sh);
+  const dw = Math.max(1, Math.round(sw * scale));
+  const dh = Math.max(1, Math.round(sh * scale));
+  const canvas = new OffscreenCanvas(dw, dh);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, dw, dh);
+  bitmap.close();
+  return {
+    blob: await canvas.convertToBlob({ type: "image/jpeg", quality: JPEG_QUALITY }),
+    size: [dw, dh],
+    natural: [sw, sh],
+  };
+}
+
 /** 캡처 PNG 에서 뷰어 사각형만 잘라 §5.4 규격 JPEG 로 만든다. */
 async function cropAndNormalize(dataUrl, rect, dpr) {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
@@ -796,17 +1012,9 @@ async function cropAndNormalize(dataUrl, rect, dpr) {
   const sh = Math.min(bitmap.height - sy, Math.round(rect.height * dpr));
   if (sw <= 0 || sh <= 0) throw new Error("뷰어 사각형이 화면 밖이다");
 
-  const short = Math.min(sw, sh);
-  let scale = 1;
-  if (short > MAX_SHORT_SIDE) scale = MAX_SHORT_SIDE / short;
-  else if (short < MIN_SHORT_SIDE) scale = MIN_SHORT_SIDE / short;
-
-  // 짧은 변만 보고 키우면 가늘고 긴 선택에서 긴 변이 터진다. 말풍선 한 줄을
-  // 드래그하면(예: 1600×160) 짧은 변 기준 배율이 7.5 라 12000×1200 이 된다 —
-  // 업로드도 크고 검출기는 어차피 1024 로 줄여 본다. 자동 탐지 경로에서는 뷰어가
-  // 이미 1200 이상이라 안 걸리지만, 드래그 선택에서는 늘 걸린다.
-  const long = Math.max(sw, sh) * scale;
-  if (long > MAX_LONG_SIDE) scale *= MAX_LONG_SIDE / long;
+  // 자동 탐지 경로에서는 뷰어가 이미 1200 이상이라 긴 변 상한에 안 걸리지만,
+  // 드래그 선택에서는 늘 걸린다 (`fitScale` 주석).
+  const scale = fitScale(sw, sh);
 
   const dw = Math.round(sw * scale);
   const dh = Math.round(sh * scale);

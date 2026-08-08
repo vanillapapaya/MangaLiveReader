@@ -10,6 +10,8 @@
   여기서 잡는 것:
     1. 순서대로 실어도 로드 중 오류가 없는가
     2. 파일을 넘나드는 호출이 실제로 되는가 (아래 exercise)
+    3. 이미지 경로의 좌표 규칙이 맞는가 (아래 checkImagePath — 값까지 본다)
+    4. `background.js` 가 파싱되는가 (여기서 실어 볼 수는 없다)
 
   돌리는 법 — 크롬 헤드리스로 DOM 을 찍어 결과 줄만 본다:
 
@@ -17,6 +19,9 @@
 -->
 <meta charset="utf-8">
 <title>mlr smoke</title>
+<!-- 확장이 얹는 스타일. **박스 위치는 이 파일에 달려 있다** (`.mlr-box` 의
+     `position: absolute`). 안 실으면 좌표 확인이 흐름 배치를 재게 된다. -->
+<link rel="stylesheet" href="../extension/overlay.css">
 <div id="out">(안 돌았다)</div>
 
 <script>
@@ -77,12 +82,139 @@
     // 캐시 좌표 환산. 정의가 빠져 있어 캐시 적중 때마다 박스가 통째로 안 그려진
     // 적이 있다 (파일을 나눌 때 다른 파일로 갔다). 여기서 부른다.
     fromCachedFrame([10, 10, 50, 50], [0, 0, 100, 100], { x: 0, y: 0, width: 200, height: 200 });
-    reportSignals();                               // content.js → panel.js status()
+
+    // 이미지 경로. 박스가 **제 이미지에 매여** 움직이는 길이라 파일 셋을 넘나든다
+    // (content.js 가 요소를 찾고, panel.js 가 좌표를 풀고, boxes.js 가 따라간다).
+    visibleImages();                               // content.js
+    anchorRect("없는-주소");                        // content.js — null 이 나와야 한다
+    imageFrameSize();                              // panel.js (ctx 없이도 안 터진다)
+    fromImageFrame([10, 10, 50, 50], [100, 100], { x: 0, y: 0, width: 200, height: 200 });
+    box.dataset.anchor = "없는-주소";
+    box.dataset.n = JSON.stringify({ nx: 0.1, ny: 0.1, nw: 0.2, nh: 0.2 });
+    boxBase(box);                                  // boxes.js → content.js anchorRect
+    relayoutBoxes();                               // boxes.js — 매인 이미지가 없어도 살아야 한다
+    delete box.dataset.anchor;
   }
 
-  setTimeout(() => {
+  // ---------------------------------------------------------------------------
+  // 이미지 경로의 좌표 규칙
+  //
+  // 여기만은 **값을 확인한다.** 세로 스크롤에서 박스는 화면이 아니라 그 이미지에
+  // 매여 있어야 한다 — 스크롤해도, 이미지가 화면 밖으로 나가도, 창 크기가 바뀌어도
+  // 같은 그림 위에 있어야 한다. 그 규칙이 깨지면 화면을 보기 전에는 안 보인다
+  // (v0.2.1 은 캐시 좌표를, v0.2.3 은 환산 함수를 그렇게 잃었다).
+  //
+  // 이미지 하나를 띄우고, 서비스가 준 것처럼 bbox 를 넣어 박스를 그린 뒤,
+  // 이미지를 옮겨 놓고 박스가 따라오는지 본다.
+  // ---------------------------------------------------------------------------
+
+  //: 100×150 회색 PNG (1픽셀을 늘려 쓴다). 주소가 곧 앵커 키다.
+  const IMG_SRC =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
+
+  function near(a, b, tol = 0.6) {
+    return Math.abs(a - b) <= tol;
+  }
+
+  async function checkImagePath() {
+    // 만화로 집히려면 화면 폭의 60% 를 넘어야 한다 (`WIDE_MIN_RATIO`).
+    const W = Math.round(innerWidth * 0.7);
+    const H = Math.round(W * 1.5);
+    const img = document.createElement("img");
+    img.src = IMG_SRC;
+    Object.assign(img.style, {
+      position: "absolute", left: "20px", top: "60px", width: `${W}px`, height: `${H}px`,
+    });
+    document.body.appendChild(img);
+    if (!img.complete) await new Promise((r) => (img.onload = r));
+
+    // 이미지 경로의 읽기가 도착한 상태를 만든다 (background 의 `begin` + `ocr`).
+    ctx = {
+      anchor: IMG_SRC, imgSize: [100, 150],
+      rect: null, scale: 1, dpr: 1, prefix: "smoke-", clip: null, partial: false,
+      cachedViewer: null,
+    };
+    const drawn = drawBoxes([{ id: 1, bbox: [10, 15, 20, 30], text: "テスト", is_bubble: true }]);
+    if (drawn !== 1) window.__errs.push(`이미지 경로 박스 ${drawn}개 (1개여야 한다)`);
+
+    const box = document.getElementById("mlr-box-smoke-1");
+    if (!box) {
+      window.__errs.push("이미지 경로 박스가 안 그려졌다");
+      return;
+    }
+    // bbox 는 보낸 이미지(100×150) 안 픽셀이다. 화면에서는 그 비율만큼이 된다.
+    const want = (x, y, w, h) => [20 + x * W, 60 + y * H, w * W, h * H];
+    let r = box.getBoundingClientRect();
+    let [wl, wt, ww, wh] = want(0.1, 0.1, 0.2, 0.2);
+    if (!near(r.left, wl) || !near(r.top, wt) || !near(r.width, ww) || !near(r.height, wh)) {
+      window.__errs.push(
+        `이미지 좌표: ${r.left},${r.top} ${r.width}×${r.height} ` +
+          `(${wl},${wt} ${ww}×${wh} 이어야 한다)`
+      );
+    }
+
+    // **이미지를 옮기면 박스도 따라와야 한다.** 스크롤이 하는 일과 같다.
+    img.style.left = "120px";
+    img.style.top = "10px";
+    relayoutBoxes();
+    r = box.getBoundingClientRect();
+    if (!near(r.left, 120 + 0.1 * W) || !near(r.top, 10 + 0.1 * H)) {
+      window.__errs.push(
+        `옮긴 뒤: ${r.left},${r.top} (${120 + 0.1 * W},${10 + 0.1 * H} 여야 한다)`
+      );
+    }
+
+    // **크기가 바뀌어도 비율로 따라온다** (창 크기·확대와 같은 경로).
+    img.style.width = `${W * 2}px`;
+    img.style.height = `${H * 2}px`;
+    relayoutBoxes();
+    r = box.getBoundingClientRect();
+    if (!near(r.width, 0.4 * W) || !near(r.height, 0.4 * H)) {
+      window.__errs.push(
+        `늘린 뒤: ${r.width}×${r.height} (${0.4 * W}×${0.4 * H} 이어야 한다)`
+      );
+    }
+
+    // **매인 이미지가 사라지면 감춘다.** 그냥 두면 다음 회차 그림 위에 지난 회차의
+    // 번역이 떠 있게 된다. 돌아오면 제자리에 다시 뜬다.
+    const parent = img.parentNode;
+    img.remove();
+    relayoutBoxes();
+    if (!box.hidden) window.__errs.push("이미지가 사라졌는데 박스가 남아 있다");
+    parent.appendChild(img);
+    relayoutBoxes();
+    if (box.hidden) window.__errs.push("이미지가 돌아왔는데 박스가 안 뜬다");
+
+    // 화면에 걸친 이미지로 집히는가.
+    const seen = visibleImages();
+    if (!seen.some((im) => im.key === IMG_SRC)) {
+      window.__errs.push("visibleImages 가 이 이미지를 못 집었다");
+    }
+    // 한 번 읽은 이미지는 `done` 으로 나와야 한다 (두 번 읽지 않게).
+    if (!seen.find((im) => im.key === IMG_SRC)?.done) {
+      window.__errs.push("이미 박스가 있는데 done 이 아니다");
+    }
+    box.remove();
+    img.remove();
+    ctx = null;
+  }
+
+  /** `background.js` 는 여기서 실어 볼 수 없다 (로드 즉시 `chrome.action` 등을
+   *  부른다). 그래도 **문법만은** 본다 — `new Function` 은 파싱만 하고 실행하지
+   *  않는다. 서비스 워커가 파싱 단계에서 죽으면 확장이 통째로 조용히 안 돈다. */
+  async function parseBackground() {
+    try {
+      new Function(await (await fetch("../extension/background.js")).text());
+    } catch (e) {
+      window.__errs.push("background.js 문법: " + (e?.message || e));
+    }
+  }
+
+  setTimeout(async () => {
     try {
       exercise();
+      await checkImagePath();
+      await parseBackground();
     } catch (e) {
       window.__errs.push("exercise: " + (e?.message || e));
     }

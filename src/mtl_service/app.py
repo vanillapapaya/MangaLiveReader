@@ -252,18 +252,6 @@ async def warmup() -> dict[str, int]:
     return await on_gpu(warm)
 
 
-@app.post("/signals", dependencies=[Depends(require_token)])
-def signals(body: dict[str, Any]) -> dict[str, str]:
-    """확장이 잰 뷰어 신호를 계측 로그에 남긴다.
-
-    가로로 넘기는 뷰어와 세로로 내리는 페이지는 읽는 단위가 달라야 하는데, 그
-    경계를 짐작으로 정하지 않으려고 값을 모은다. 구독이 걸린 사이트는 직접 열어
-    눌러야 하므로, 상태줄에 찍고 마는 대신 여기로 보내 쌓는다.
-    """
-    metrics.record(cfg.metrics.jsonl_path, kind="signals", **body)
-    return {"status": "ok"}
-
-
 @app.post("/cache/purge", dependencies=[Depends(require_token)])
 async def cache_purge(body: dict[str, Any] | None = None) -> dict[str, int]:
     """캐시를 지운다.

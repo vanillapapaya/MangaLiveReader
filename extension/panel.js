@@ -33,7 +33,6 @@ const PANEL_MORE = [
   { act: "status", label: "상태", key: null, desc: "왼쪽 위 진행 표시" },
   { act: "hide", label: "숨김", key: "`", desc: "잠깐 걷어내고 그림 보기", sub: "백틱은 누르는 동안만" },
   { act: "drop", label: "캐시삭제", key: null, desc: "이 페이지 캐시만 버리기", sub: "다시 읽지는 않는다" },
-  { act: "signals", label: "진단", key: null, desc: "이 페이지가 어떤 뷰어인지 재본다", sub: "판정 경계를 정하려고 모으는 중" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -277,14 +276,6 @@ function bindPanel(root) {
       case "drop":
         send({ type: "purge-page" });
         break;
-      case "signals": {
-        // **상태줄이 꺼져 있어도 보이게 한다.** 진단인데 안 보이면 소용이 없다.
-        root.classList.remove("mlr-hide-status");
-        const s = reportSignals();
-        // 서비스 로그에도 남긴다 — 사이트를 옮겨 다니며 눌러도 알아서 쌓인다.
-        send({ type: "signals", data: s });
-        break;
-      }
       case "more": {
         // 접힌 상태에서 누르면 **펼친 채로 고정**한다 (마우스를 떼도 안 접힌다).
         // 나머지 기능을 쓰려면 손이 패널을 벗어나야 하는 경우가 있다.
@@ -413,6 +404,36 @@ function fromCachedFrame([x, y, w, h], base, now) {
   return sane ? p : toCss([x, y, w, h]);
 }
 
+/** 서비스 bbox(보낸 이미지 좌표) → 페이지 CSS 좌표. **이미지 경로 전용.**
+ *
+ * 보낸 것이 그 이미지 **전체**라 bbox 를 이미지 크기로 나누면 곧바로 비율이다.
+ * 그 비율을 지금 화면에서 그 이미지가 차지하는 사각형에 곱한다. `toCss` 와 달리
+ * 배율(`scale`)도 `dpr` 도 끼지 않는다 — 캡처를 거치지 않았기 때문이다.
+ *
+ * **화면 밖이라고 물리지 않는다** (`fromCachedFrame` 과 다른 점이다). 이미지가
+ * 화면보다 길면 아래쪽 박스는 당연히 화면 밖에 놓이고, 스크롤하면 `relayoutBoxes`
+ * 가 제자리로 데려온다.
+ */
+function fromImageFrame([x, y, w, h], [iw, ih], rect) {
+  return {
+    left: rect.x + (x / iw) * rect.width,
+    top: rect.y + (y / ih) * rect.height,
+    width: (w / iw) * rect.width,
+    height: (h / ih) * rect.height,
+  };
+}
+
+/** 이 좌표가 만들어진 이미지의 크기.
+ *
+ * 캐시에서 온 좌표는 **저장될 때의 크기** 기준이다. 이미지 경로에서는 그 기준
+ * 사각형이 곧 이미지 전체라(`viewer = [0,0,w,h]`), 그 폭·높이로 나누면 맞는
+ * 비율이 나온다. 정규화 상수가 바뀌어 크기가 달라져도 옛 캐시가 그대로 산다.
+ */
+function imageFrameSize() {
+  const v = ctx?.cachedViewer;
+  return v && v[2] && v[3] ? [v[2], v[3]] : ctx?.imgSize;
+}
+
 function toCss([x, y, w, h]) {
   const k = 1 / (ctx.scale * ctx.dpr);
   return {
@@ -471,17 +492,30 @@ function carryOverTranslations() {
 function drawBoxes(regions) {
   const carried = carryOverTranslations();
   const boxes = overlay().querySelector("#mlr-boxes");
-  // 전체 읽기는 `begin` 에서 이미 비웠다. 여기서 또 비우면 영역 하나만 다시
-  // 읽을 때 나머지 박스가 통째로 사라진다.
-  const vrect = viewerRect();
+  // 여기서 박스를 비우지 않는다. 전체 읽기는 `begin` 이 이미 비웠고, 여기서 또
+  // 비우면 영역 하나만 다시 읽을 때 나머지 박스가 통째로 사라진다.
+
+  // 좌표 기준 — 이미지 경로는 그 이미지 요소, 캡처 경로는 뷰어 사각형.
+  const base = ctx.anchor ? anchorRect(ctx.anchor) : viewerRect();
+  if (ctx.anchor && !base) {
+    // 읽는 사이에 사이트가 뷰어를 다시 그려 그 이미지가 사라졌다. 좌표를 얹을 곳이
+    // 없으니 그리지 않는다 — 아무 데나 놓느니 없는 편이 낫다.
+    status("읽던 이미지가 사라졌다 — 다시 눌러 주세요", true);
+    return 0;
+  }
   let drawn = 0;
   for (const r of regions) {
     // 캐시에서 온 좌표는 그때 기준으로 환산한다 (content.js `fromCachedFrame`).
     // 기준은 **이번 캡처가 쓴 사각형**이다. 여기서 다시 재면 뒤로 돌아갔을 때
     // 뷰어 요소가 갈려 엉뚱한 값이 나온다 (박스가 화면 밖으로 날아갔다).
-    const p = ctx.cachedViewer
-      ? fromCachedFrame(r.bbox, ctx.cachedViewer, ctx.viewerFull || vrect)
-      : toCss(r.bbox);
+    //
+    // 이미지 경로에는 그 환산이 아예 필요 없다. 좌표가 처음부터 이미지 안 비율이라
+    // 캐시에서 왔든 방금 읽었든 같은 식으로 풀린다.
+    const p = ctx.anchor
+      ? fromImageFrame(r.bbox, imageFrameSize(), base)
+      : ctx.cachedViewer
+        ? fromCachedFrame(r.bbox, ctx.cachedViewer, ctx.viewerFull || base)
+        : toCss(r.bbox);
     // 검출기에 문맥을 주려고 넓게 보냈으므로, 고른 범위 밖의 것은 버린다.
     // 중심으로 판정한다 — 경계에 걸친 박스를 통째로 버리면 고른 말풍선이 사라진다.
     if (ctx.clip && !inClip(p, ctx.clip)) continue;
@@ -494,13 +528,16 @@ function drawBoxes(regions) {
       width: `${p.width}px`,
       height: `${p.height}px`,
     });
-    // **뷰어 기준 비율을 박아 둔다.** 스크롤·확대·전체화면에서 이 값으로 다시 놓는다.
-    if (vrect) {
+    // **어느 요소에 매인 박스인지 적어 둔다.** 스크롤하면 이미지마다 따로 움직이므로
+    // (세로 스크롤은 화면에 여러 장이 걸친다) 박스마다 제 기준을 들고 있어야 한다.
+    if (ctx.anchor) div.dataset.anchor = ctx.anchor;
+    // **기준 사각형 대비 비율을 박아 둔다.** 스크롤·확대·전체화면에서 이 값으로 다시 놓는다.
+    if (base) {
       div.dataset.n = JSON.stringify({
-        nx: (p.left - vrect.x) / vrect.width,
-        ny: (p.top - vrect.y) / vrect.height,
-        nw: p.width / vrect.width,
-        nh: p.height / vrect.height,
+        nx: (p.left - base.x) / base.width,
+        ny: (p.top - base.y) / base.height,
+        nw: p.width / base.width,
+        nh: p.height / base.height,
       });
       // **처음 자리는 따로 박아 둔다.** `n` 은 손으로 크기를 바꾸면 갱신되는데,
       // 캐시가 다음에 돌려주는 것은 언제나 처음 자리다. 지웠다고 적을 때 이 값을
