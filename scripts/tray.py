@@ -57,6 +57,43 @@ def service_port() -> int:
     return port
 
 
+def service_endpoint() -> tuple[str, int]:
+    """서비스가 뜰 주소. **기동 코드에게 직접 물어본다.**
+
+    루프백이라고 가정하면 안 된다 — 설정에 따라 Tailscale 주소나 `bind_host` 에
+    적은 주소에 뜬다. 같은 규칙을 여기서 다시 구현하면 언젠가 갈린다.
+    """
+    port = service_port()
+    try:
+        from mtl_service.__main__ import resolve_host
+        from mtl_service.config import load
+
+        return resolve_host(load().server), port
+    except Exception:  # noqa: BLE001 — 설정이 깨졌으면 기동이 알아서 알려 준다
+        return "127.0.0.1", port
+
+
+def service_already_up(host: str, port: int) -> bool:
+    """다른 창이 이미 서비스를 띄워 뒀는가.
+
+    아래 `acquire_single_instance` 는 **트레이가 둘 켜지는 것**만 막는다. 콘솔
+    런처(`MangaLiveReader.cmd`)로 띄워 둔 서비스는 그 자물쇠를 잡지 않으므로,
+    그 상태에서 바탕화면 아이콘을 누르면 트레이가 서비스를 하나 더 띄운다.
+    두 번째는 포트를 못 잡고 죽고, 트레이는 「서비스가 멈췄습니다」를 띄운다 —
+    멀쩡히 돌고 있는데도.
+
+    **붙어 보는 것 말고는 방법이 없다.** 처음에는 그 포트에 bind 를 시도해 봤는데,
+    윈도우는 특정 주소가 잡혀 있어도 와일드카드 bind 를 허용한다 (유닉스와 다르다).
+    Tailscale 주소에 떠 있는 서비스를 상대로 실측했더니 그대로 「안 떠 있음」이
+    나왔다.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def acquire_single_instance() -> socket.socket | None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -185,15 +222,23 @@ def main() -> int:
         message_box("이미 실행 중입니다.\n트레이 아이콘을 확인하세요.")
         return 0
 
+    host, port = service_endpoint()
+    if service_already_up(host, port):
+        message_box(
+            f"서비스가 이미 http://{host}:{port} 에 떠 있습니다.\n\n"
+            "콘솔 창(MangaLiveReader.cmd)으로 켜 두셨다면 그 창을 닫은 뒤\n"
+            "다시 눌러 주세요. 트레이로 관리하려면 그쪽 하나만 띄웁니다."
+        )
+        return 0
+
     image = Image.open(ICON_PNG)
-    port = service_port()
 
     threading.Thread(target=server_loop, daemon=True).start()
 
     icon = pystray.Icon(
         "mangalivereader",
         image,
-        f"MangaLiveReader · 127.0.0.1:{port}",
+        f"MangaLiveReader · {host}:{port}",
         menu=pystray.Menu(
             pystray.MenuItem(
                 lambda item: "켜짐" if is_running() else "꺼짐",
