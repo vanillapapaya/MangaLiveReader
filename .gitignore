@@ -19,6 +19,12 @@ credentials*
 service.local.toml
 *.local.toml
 
+# 런처가 이 기계에 남기는 것 (scripts/setup.ps1)
+.setup-mode
+.setup-done
+icon.ico
+*.lnk
+
 # 산출물
 .venv/
 .venv-linux/

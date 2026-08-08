@@ -46,6 +46,11 @@ client = [
     "httpx>=0.28",
     "httpx-sse>=0.4",
 ]
+# 윈도우 트레이 런처(scripts/tray.py). 기본 의존성에 넣지 않는 이유는 리눅스에서
+# 쓸모가 없어서다 — WSL 로 개발할 때 X 백엔드를 끌고 들어온다.
+launcher = [
+    "pystray>=0.19",
+]
 
 [project.scripts]
 mtl-service = "mtl_service.__main__:main"
@@ -58,8 +63,23 @@ build-backend = "hatchling.build"
 packages = ["src/mtl_service", "src/mtl_client", "src/mtl_shared"]
 
 # ---------------------------------------------------------------------------
-# PyTorch는 반드시 CUDA 12.8 빌드로. 기본 PyPI 휠에는 sm_120 커널이 없어
-# RTX 5080에서 "no kernel image is available" 로 죽는다.
+# PyTorch 를 cu128 빌드로 고정한다.
+#
+# **처음 적어둔 이유는 지금 사실이 아니다.** "기본 PyPI 휠에는 sm_120 커널이
+# 없다" 는 torch 2.7 시절(기본이 cu126) 이야기다. 2.11 의 기본 휠은 CUDA 13.0
+# 의존이라(`cuda-toolkit==13.0.2`) sm_120 을 담고 있다. 고정을 풀어도 RTX 50 은
+# 돈다.
+#
+# 그래도 고정을 유지하는 이유는 **재현성** 하나다. 풀어 두면 torch 가 오를
+# 때마다 CUDA 판이 갈려서, 배포하고 나서 받은 날짜에 따라 되는 사람과 안 되는
+# 사람이 갈린다. 실제로 재 본 조합에 묶어 둔다.
+#
+# 어느 쪽이든 담기는 아키는 sm_75(튜링) 이상이다. GTX 10 시리즈(sm_61)는 못
+# 쓰고, CUDA 13 은 파스칼을 아예 뺐으니 고정을 풀어도 마찬가지다.
+# `scripts/setup.ps1` 이 기동 전에 대조해서 알려 준다.
+#
+# NVIDIA 가 아닌 기계는 이 인덱스를 타면 안 된다 — 쓰지도 못할 런타임 4.2GB 를
+# 받는다. 런처가 `--no-install-package torch` 로 빼고 CPU 휠을 따로 깐다.
 # ---------------------------------------------------------------------------
 [[tool.uv.index]]
 name = "pytorch-cu128"

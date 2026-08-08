@@ -58,11 +58,40 @@
 - 번역 API 키 하나. Anthropic 또는 Google(Gemini)
   - 200쪽 1권 기준 claude-sonnet-5 $1.64, gemini-3.6-flash $2.44
 
-RTX 50 시리즈(sm_120)는 torch 가 cu128 빌드여야 함. `pyproject.toml` 에 인덱스를
-박아 두었으니 `uv sync` 면 맞춰짐. 기본 PyPI 휠에는 sm_120 커널이 없어
-`no kernel image is available` 로 죽음.
+torch 는 cu128 빌드로 고정돼 있음 (`pyproject.toml` 에 인덱스를 박아 뒀으니
+`uv sync` 면 맞춰짐). 재현성 때문이지 요구사항이 아님 — 지금은 기본 PyPI 휠도
+CUDA 13 이라 RTX 50 이 그냥 돎.
 
-## 설치
+**튜링(sm_75) 이상만 됨.** GTX 10 시리즈(sm_61)는 커널이 없어
+`no kernel image is available` 로 죽고, CUDA 13 은 파스칼을 아예 뺐으니 인덱스를
+바꿔도 마찬가지.
+
+## 설치 — 윈도우면 이것만
+
+저장소를 받아서 **`MangaLiveReader.cmd` 를 더블클릭.** 없는 것만 알아서 채우고
+서비스를 띄움:
+
+| | |
+|---|---|
+| uv·파이썬 3.11 | 없으면 받음 (uv 가 파이썬까지 챙김) |
+| 그래픽카드 | NVIDIA 면 cu128, 아니면 CPU 판으로 갈아탐 (아래) |
+| 의존성 | `uv sync --extra launcher` |
+| 모델 가중치 | `scripts/fetch_models.py` |
+| API 키 | 없으면 창에서 물어보고 `~/.config/mangalivereader/env` 에 저장 |
+| 확장 | 첫 실행 때 등록 방법 안내 (대신 깔아 줄 수는 없음) |
+
+첫 실행은 5GB 를 받느라 십몇 분. 두 번째부터는 전부 건너뛰고 몇 초. 끝에
+바탕화면 바로가기를 만들지 물어봄 — 그걸 쓰면 **`MangaLiveReader.vbs`** 로 붙어서
+콘솔 창 없이 트레이 아이콘으로만 뜸 (재시작·로그 열기·종료).
+
+**NVIDIA 가 아니면** 런처가 먼저 경고하고 계속할지 물어봄. cu128 인덱스를 그대로
+타면 쓰지도 못할 런타임 4.2GB 를 받게 되므로, torch 만 빼고 sync 한 뒤 CPU 휠을
+따로 깔고 `service.local.toml` 에 `device = "cpu"` 를 적어 둠. 라데온은 이 길밖에
+없음 — ROCm 은 리눅스 전용이고 윈도우 DirectML 은 옛 torch 에 묶여 있음.
+
+고른 갈래는 `.setup-mode` 에 남음. 지우고 다시 실행하면 다시 고름.
+
+## 설치 — 직접
 
 ```bash
 uv sync                                     # 3.11 이 기본이 아니면 --python 3.11
@@ -81,14 +110,24 @@ printf 'ANTHROPIC_API_KEY=sk-ant-...\n' > ~/.config/mangalivereader/env
 uv run mtl-service
 ```
 
+> **윈도우와 WSL 을 같이 쓴다면 `uv run` 을 치지 말 것.** venv 를 둘로 갈라 쓰는데
+> 맨 `uv run`/`uv sync` 는 어느 쪽에서 치든 상대편 `.venv` 를 지우고 다시 만듦.
+> 대신 `./run-service.sh` (WSL) 나 `run-service.cmd` (윈도우 cmd). 자세한 건
+> [venv 가 둘](#venv-가-둘).
+
+이런 두 줄이 뜨면 됨. GPU 이름과 torch 버전은 기계마다 다름 —
+`GPU:` 줄이 뜨는지, 주소가 찍히는지만 보면 됨:
+
 ```
-GPU: NVIDIA GeForce RTX 5080 · torch 2.11.0+cu128
+GPU: <이 기계의 그래픽카드> · torch <버전>+cu128
 mtl-service → http://127.0.0.1:8788
 ```
 
+`GPU:` 줄 대신 `CUDA 를 못 잡았다` 가 나오면 CPU 로 도는 것 (10배 느림).
+
 ```bash
 curl -s http://127.0.0.1:8788/health
-# {"status":"ok","models_loaded":false,"gpu":"NVIDIA GeForce RTX 5080",...}
+# {"status":"ok","models_loaded":false,"gpu":"<그래픽카드 이름>",...}
 ```
 
 `models_loaded` 는 첫 요청 때 true. 미리 올리려면 `curl -X POST .../warmup`.
@@ -401,7 +440,8 @@ git config core.hooksPath .githooks
 
 ## 이 저장소를 만든 환경 (윈도우 + WSL)
 
-여기부터는 저자 환경 메모. 다른 환경이면 필요 없음.
+여기부터는 저자 환경 메모. 한 OS 에서만 쓰면 필요 없음 — 단 **윈도우와 WSL 을 오가며
+쓴다면 아래 「venv 가 둘」은 읽을 것.** 모르고 `uv run` 을 치면 venv 하나가 날아감.
 
 ### venv 가 둘
 
@@ -423,6 +463,19 @@ UV_PROJECT_ENVIRONMENT=~/.venvs/mlr uv sync --python 3.11
 
 WSL 셸에서 맨 `uv sync`/`uv run` 금지. 기본 대상이 `.venv` 인데 그것은 윈도우용이라
 리눅스 휠로 덮어써서 윈도우 쪽이 깨짐.
+
+밟았으면 복구는 윈도우 cmd 에서 `uv sync`. 단 그것만으로는 중간에 멈춤:
+
+```
+error: failed to remove file `...\.venv\lib64`: 액세스가 거부되었습니다. (os error 5)
+```
+
+리눅스 venv 의 `lib64 -> lib` 는 심볼릭 링크고, WSL 이 만든 것은 NTFS 리파스
+포인트라 윈도우 uv 가 못 지움. **WSL 에서** 껍데기를 먼저 치우고 다시 `uv sync`:
+
+```bash
+rm -rf /mnt/c/경로/MangaLiveReader/.venv
+```
 
 `py -X utf8 -m mtl_service` 금지. `py` 는 시스템 파이썬이라 의존성이 없음.
 윈도우에서는 `-X utf8` 필수 (없으면 로그 한글이 cp949 로 깨짐).

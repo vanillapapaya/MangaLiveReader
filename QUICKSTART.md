@@ -101,7 +101,7 @@ uv run python scripts\fetch_models.py
 ```
 
 ```
-GPU: NVIDIA GeForce RTX 4070 · torch 2.11.0+cu128
+GPU: <이 기계의 그래픽카드> · torch <버전>+cu128
 mtl-service → http://127.0.0.1:8788
 ```
 
