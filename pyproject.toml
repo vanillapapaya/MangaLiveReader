@@ -1,6 +1,6 @@
 [project]
 name = "manga-live-reader"
-version = "0.2.3"
+version = "0.3.0"
 description = "만화 뷰어 화면을 캡처해 OCR + 번역 결과를 오버레이로 표시하는 읽기 도구"
 requires-python = ">=3.11,<3.12"
 # **선택이 아니다.** src/mtl_service/ctd 가 comic-text-detector(GPL-3.0)와
