@@ -78,7 +78,7 @@ packages = ["src/mtl_service", "src/mtl_client", "src/mtl_shared"]
 # 쓰고, CUDA 13 은 파스칼을 아예 뺐으니 고정을 풀어도 마찬가지다.
 # `scripts/setup.ps1` 이 기동 전에 대조해서 알려 준다.
 #
-# NVIDIA 가 아닌 기계는 이 인덱스를 타면 안 된다 — 쓰지도 못할 런타임 4.2GB 를
+# NVIDIA 가 아닌 기계는 이 인덱스를 타면 안 된다 — 쓰지도 못할 CUDA 런타임을 몇 GB 씩
 # 받는다. 런처가 `--no-install-package torch` 로 빼고 CPU 휠을 따로 깐다.
 # ---------------------------------------------------------------------------
 [[tool.uv.index]]

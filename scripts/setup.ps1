@@ -3,7 +3,7 @@
     MangaLiveReader 부트스트랩 런처. `MangaLiveReader.cmd` 가 이 파일을 부른다.
 
     없는 것만 채우고 서비스를 띄운다. 모든 단계가 멱등이라 두 번째 실행부터는
-    전부 「있음」으로 넘어가고 몇 초 만에 뜬다. 설치용과 실행용을 나누지 않는
+    전부 「있음」으로 넘어간다. 설치용과 실행용을 나누지 않는
     이유다 — 받는 사람은 늘 같은 파일 하나만 누르면 된다.
 
     **이 파일은 UTF-8 BOM 으로 저장한다.** PowerShell 5.1 은 BOM 이 없으면
@@ -127,11 +127,11 @@ function Confirm-CpuMode($vendor) {
     Warn "$label 이 감지됐습니다."
     Write-Host ''
     Write-Host '  이 프로그램의 글자 인식은 NVIDIA GPU 를 씁니다. 그래픽카드 없이도' -ForegroundColor Yellow
-    Write-Host '  돌아가긴 하지만 한 장에 5초 넘게 걸려 실사용은 어렵습니다.' -ForegroundColor Yellow
+    Write-Host '  돌아가긴 하지만 글자 인식이 CPU 로 떨어져 실사용은 어렵습니다.' -ForegroundColor Yellow
     Write-Host ''
     Write-Host '  라데온은 다른 방법이 없습니다 — ROCm 은 리눅스 전용입니다.'
     Write-Host ''
-    Write-Host '    [1] 그래도 설치 (약 700MB, 느림)'
+    Write-Host '    [1] 그래도 설치 (GPU 판보다 작지만 느립니다)'
     Write-Host '    [2] 취소'
     Write-Host ''
     $ans = Read-Host '  고르세요 (1/2)'
@@ -166,7 +166,8 @@ function Sync-Venv($uv, $mode) {
     $syncArgs = @('sync', '--python', '3.11', '--extra', 'launcher')
     if ($mode -eq 'cpu') {
         # torch 계열만 빼고 나머지를 깐다. 빼지 않으면 pyproject 의 cu128
-        # 인덱스가 걸려 쓰지도 못할 NVIDIA 런타임 4.2GB 를 받는다.
+        # 인덱스가 걸려 쓰지도 못할 CUDA 런타임을 몇 GB 씩 받는다 (WSL venv 에서
+        # `nvidia/` 만 4.2GB 였다. 윈도우는 재 본 적이 없다).
         $syncArgs += @('--no-install-package', 'torch', '--no-install-package', 'torchvision')
     }
     & $uv @syncArgs
@@ -326,8 +327,8 @@ Write-Host '  ───────────────' -ForegroundColor Da
 $firstRun = -not (Test-Path $Py)
 if ($firstRun) {
     Write-Host ''
-    Write-Host '  처음 실행이라 필요한 것을 받습니다. 십몇 분 걸리고, 다음부터는' -ForegroundColor DarkGray
-    Write-Host '  몇 초 만에 뜹니다. 이 창은 켜 둔 채로 두세요.' -ForegroundColor DarkGray
+    Write-Host '  처음 실행이라 필요한 것을 받습니다. 회선에 따라 오래 걸릴 수' -ForegroundColor DarkGray
+    Write-Host '  있습니다. 이 창은 켜 둔 채로 두세요 — 다음부터는 건너뜁니다.' -ForegroundColor DarkGray
 }
 
 Step 'uv 확인'
@@ -357,9 +358,13 @@ if (Test-Path $ModeFile) {
 Step '파이썬 환경'
 Assert-NotLinuxVenv
 if ($firstRun) {
-    # 실측: 윈도우 cu128 venv 4.8GB, CPU 판은 torch 만 갈아끼우니 훨씬 작다.
-    $size = if ($mode -eq 'cuda') { '약 5GB' } else { '약 700MB' }
-    Ok "받는 중입니다 ($size). 진행 표시가 멈춘 것처럼 보여도 기다려 주세요."
+    # 실측한 것만 말한다. 윈도우 cu128 venv 가 4.8GB 였다. CPU 판은 torch 만
+    # 갈아끼우니 그보다 작지만, 재 본 적이 없어 숫자를 적지 않는다.
+    if ($mode -eq 'cuda') {
+        Ok '받는 중입니다 (5GB 쯤). 진행 표시가 멈춘 것처럼 보여도 기다려 주세요.'
+    } else {
+        Ok '받는 중입니다. 진행 표시가 멈춘 것처럼 보여도 기다려 주세요.'
+    }
 }
 Sync-Venv $uv $mode
 if (-not (Test-Path $Py)) { Die '파이썬 환경을 만들지 못했습니다.' }
